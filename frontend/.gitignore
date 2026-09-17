@@ -8,7 +8,8 @@
 # testing
 /coverage
 
-# production
+# production (Vite outputs to dist/; /build is a leftover from the old CRA setup)
+/dist
 /build
 
 # misc

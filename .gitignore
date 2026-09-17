@@ -1,0 +1,21 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node / Vite
+node_modules/
+frontend/dist/
+frontend/build/
+frontend/coverage/
+*.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Claude Code project tooling (machine-local skill junctions/config)
+.agents/
+.claude/

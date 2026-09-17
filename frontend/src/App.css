@@ -1,38 +1,384 @@
-.App {
-  text-align: center;
+.app {
+  max-width:1100px;
+  margin:0 auto;
+  padding:2rem 1.5rem 4rem;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+.app h1 {
+  font-size:1.6rem;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
+.app .tagline {
+  color:var(--text-dim);
+  margin-top:0;
+}
+
+.layout {
+  grid-template-columns:minmax(320px,380px) 1fr;
+  align-items:start;
+  gap:1.5rem;
+  display:grid;
+}
+
+.panel {
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:1.25rem;
+}
+
+.field {
+  margin-bottom:1rem;
+}
+
+.field>label {
+  color:var(--text-dim);
+  margin-bottom:.3rem;
+  font-size:.85rem;
+  display:block;
+}
+
+.field input[type=number],.field select {
+  background:var(--panel-2);
+  border:1px solid var(--border);
+  border-radius:6px;
+  width:100%;
+  padding:.5rem .6rem;
+}
+
+.field input[type=range] {
+  width:100%;
+}
+
+.row {
+  gap:.6rem;
+  display:flex;
+}
+
+.row>* {
+  flex:1;
+}
+
+.form-top {
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:1.25rem;
+  display:flex;
+}
+
+.unit-toggle {
+  border:1px solid var(--border);
+  border-radius:6px;
+  display:inline-flex;
+  overflow:hidden;
+}
+
+.link-btn {
+  color:var(--text-dim);
+  cursor:pointer;
+  background:0 0;
+  border:0;
+  padding:.3rem .4rem;
+  font-size:.85rem;
+  text-decoration:underline;
+}
+
+.link-btn:hover {
+  color:var(--text);
+}
+
+.link-btn:disabled {
+  opacity:.6;
+  cursor:default;
+  text-decoration:none;
+}
+
+.unit-toggle button {
+  background:var(--panel-2);
+  cursor:pointer;
+  border:0;
+  padding:.4rem .9rem;
+}
+
+.unit-toggle button.active {
+  background:var(--accent);
+  color:#fff;
+}
+
+.submit {
+  background:var(--accent);
+  color:#fff;
+  cursor:pointer;
+  border:0;
+  border-radius:6px;
+  width:100%;
+  padding:.7rem;
+  font-weight:600;
+}
+
+.submit:disabled {
+  opacity:.6;
+  cursor:default;
+}
+
+.activity-option {
+  border:1px solid var(--border);
+  cursor:pointer;
+  border-radius:8px;
+  margin-bottom:.5rem;
+  padding:.6rem .75rem;
+  display:block;
+}
+
+.activity-option.selected {
+  border-color:var(--accent);
+  background:#4f8cff14;
+}
+
+.activity-option .head {
+  justify-content:space-between;
+  font-weight:600;
+  display:flex;
+}
+
+.activity-option .mult {
+  color:var(--text-dim);
+  font-weight:400;
+}
+
+.activity-option .summary {
+  margin:.15rem 0 0;
+  font-size:.9rem;
+}
+
+.activity-option ul {
+  color:var(--text-dim);
+  margin:.4rem 0 0;
+  padding-left:1.1rem;
+  font-size:.83rem;
+}
+
+.avatar-scene {
+  cursor:grab;
+  background:#14161c;
+  border-radius:8px;
+  height:360px;
+  margin-bottom:1rem;
+  overflow:hidden;
+}
+
+.avatar-scene:active {
+  cursor:grabbing;
+}
+
+@media (width<=820px) {
+  .avatar-scene {
+    height:300px;
   }
 }
 
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+.scrubber {
+  align-items:center;
+  gap:.75rem;
+  margin-top:.6rem;
+  display:flex;
 }
 
-.App-link {
-  color: #61dafb;
+.scrubber input[type=range] {
+  accent-color:var(--accent);
+  flex:1;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
+.scrubber-play {
+  border:1px solid var(--border);
+  background:var(--panel-2);
+  width:2rem;
+  height:2rem;
+  color:var(--text);
+  cursor:pointer;
+  border-radius:50%;
+  flex:none;
+  justify-content:center;
+  align-items:center;
+  font-size:.7rem;
+  line-height:1;
+  display:flex;
+}
+
+.scrubber-play:hover {
+  border-color:var(--accent);
+}
+
+.scrubber-label {
+  text-align:right;
+  min-width:6.75rem;
+  color:var(--text-dim);
+  font-variant-numeric:tabular-nums;
+  flex:none;
+  font-size:.85rem;
+}
+
+.stat-grid {
+  grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+  gap:.75rem;
+  margin-bottom:1.25rem;
+  display:grid;
+}
+
+.stat {
+  background:var(--panel-2);
+  border-radius:8px;
+  padding:.75rem;
+}
+
+.stat .value {
+  font-size:1.35rem;
+  font-weight:600;
+}
+
+.stat .label {
+  color:var(--text-dim);
+  font-size:.8rem;
+}
+
+.value.delta-good {
+  color:var(--good);
+}
+
+.value.delta-bad {
+  color:var(--bad);
+}
+
+.value.delta-warn {
+  color:var(--warn);
+}
+
+.warning {
+  border-left:3px solid var(--warn);
+  background:#e8b04b1f;
+  border-radius:4px;
+  margin-bottom:.5rem;
+  padding:.6rem .8rem;
+  font-size:.9rem;
+}
+
+.chart-tabs {
+  flex-wrap:wrap;
+  gap:.3rem;
+  margin-bottom:.5rem;
+  display:flex;
+}
+
+.chart-tabs button {
+  background:var(--panel-2);
+  border:1px solid var(--border);
+  cursor:pointer;
+  border-radius:6px;
+  padding:.3rem .7rem;
+  font-size:.85rem;
+}
+
+.chart-tabs button.active {
+  background:var(--accent);
+  border-color:var(--accent);
+  color:#fff;
+}
+
+.table-scroll {
+  -webkit-overflow-scrolling:touch;
+  overflow-x:auto;
+}
+
+table.projection {
+  border-collapse:collapse;
+  width:100%;
+  font-size:.88rem;
+}
+
+table.projection th,table.projection td {
+  text-align:right;
+  border-bottom:1px solid var(--border);
+  padding:.35rem .5rem;
+}
+
+table.projection th:first-child,table.projection td:first-child {
+  text-align:left;
+}
+
+.error-box {
+  border:1px solid var(--bad);
+  color:#f0b5ab;
+  background:#e2604b1f;
+  border-radius:6px;
+  padding:.75rem;
+}
+
+.muted {
+  color:var(--text-dim);
+}
+
+.is-updating {
+  opacity:.65;
+  transition:opacity .15s;
+}
+
+.updating-dot {
+  color:var(--text-dim);
+  font-size:.8rem;
+  font-weight:400;
+}
+
+.week-table {
+  margin-top:1.5rem;
+}
+
+.week-table summary,.measure-details summary {
+  cursor:pointer;
+  color:var(--text-dim);
+  padding:.3rem 0;
+  font-weight:600;
+}
+
+.week-table summary:hover,.measure-details summary:hover {
+  color:var(--text);
+}
+
+.measure-details {
+  margin-bottom:1rem;
+}
+
+.measure-details[open] summary {
+  color:var(--text);
+  margin-bottom:.2rem;
+}
+
+.week-table table {
+  margin-top:.6rem;
+}
+
+@media (width<=820px) {
+  .app {
+    padding:1.25rem .9rem 3rem;
   }
-  to {
-    transform: rotate(360deg);
+  .layout {
+    grid-template-columns:1fr;
+    gap:1rem;
+  }
+  .panel {
+    padding:1rem;
+  }
+  .stat-grid {
+    grid-template-columns:repeat(auto-fit,minmax(115px,1fr));
+    gap:.5rem;
+  }
+  .stat .value {
+    font-size:1.15rem;
+  }
+  table.projection {
+    font-size:.82rem;
+  }
+  table.projection th,table.projection td {
+    white-space:nowrap;
+    padding:.3rem .4rem;
   }
 }
