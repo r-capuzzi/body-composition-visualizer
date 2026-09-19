@@ -145,36 +145,30 @@ def _detect_warnings(
     net_fat = expected[-1].fat_mass_kg - expected[0].fat_mass_kg
     if net_lean > 0.2 and net_fat > max(1.0, 2.0 * net_lean):
         warnings.append(
-            f"Projected fat gain (+{net_fat:.1f} kg) far outpaces muscle gain "
-            f"(+{net_lean:.1f} kg). Muscle gain is capped by training experience, "
-            "so a smaller surplus reaches the same muscle with less fat."
+            f"Projected fat gain of {_mass(net_fat, sign=True)} far outpaces muscle "
+            f"gain of {_mass(net_lean, sign=True)}. Muscle gain is capped by training "
+            "experience, so a smaller surplus reaches the same muscle with less fat."
         )
 
-    # Plateau: with fixed calories, adaptation + a lighter body shrink the
-    # deficit over time. Flag when the last-quarter loss rate has fallen well
-    # below the first-quarter rate while still nominally cutting.
-    if len(expected) >= 16 and req.planned_daily_calories < expected[0].maintenance_kcal:
-        q = len(expected) // 4
-        early_rate = (expected[0].weight_kg - expected[q].weight_kg) / q
-        late_rate = (expected[-q - 1].weight_kg - expected[-1].weight_kg) / q
-        if early_rate > 0.15 and late_rate < 0.55 * early_rate:
-            plateau_week = next(
-                (p.week for a, p in zip(expected, expected[1:])
-                 if (a.weight_kg - p.weight_kg) < 0.5 * early_rate),
-                expected[-1].week,
-            )
-            warnings.append(
-                f"Weight loss slows from ~{early_rate:.2f} to ~{late_rate:.2f} kg/week "
-                f"by around week {plateau_week} as your metabolism adapts. To keep "
-                "progressing you would need to reduce intake further or add activity."
-            )
-
     essential_pct = ESSENTIAL_FAT_FRACTION[req.sex] * 100.0
-    if expected[-1].body_fat_pct < essential_pct + 3.0:
+    who = "women" if req.sex.value == "female" else "men"
+    if req.body_fat_pct < essential_pct:
+        # Input allows body fat down to 3% for either sex, but essential fat is
+        # the floor a living body sustains - an entry under it is almost
+        # certainly an underestimate, and every number downstream inherits it.
+        # (This used to fall through to the "approaches" wording below, which
+        # read as "9% approaches the 12% minimum".)
         warnings.append(
-            f"Projected body fat ({expected[-1].body_fat_pct:.0f}%) approaches the "
-            f"essential minimum (~{essential_pct:.0f}%). Muscle loss accelerates "
-            "near this level."
+            f"The body fat you entered ({req.body_fat_pct:.0f}%) is below the "
+            f"essential minimum for {who} (~{essential_pct:.0f}%), which is about "
+            "as lean as a healthy body can get - it's probably an underestimate. "
+            "A higher estimate will give a more realistic projection."
+        )
+    elif expected[-1].body_fat_pct < essential_pct + 3.0:
+        warnings.append(
+            f"Projected body fat falls to {expected[-1].body_fat_pct:.0f}%, close to "
+            f"the essential minimum for {who} (~{essential_pct:.0f}%). Muscle loss "
+            "accelerates near this level."
         )
 
     if req.planned_daily_calories < expected[0].maintenance_kcal and req.protein_g_per_kg < 1.6:
@@ -185,6 +179,51 @@ def _detect_warnings(
         )
 
     return warnings
+
+
+def _plan_notes(
+    req: CalculateRequest, expected: list[ProjectionPoint]
+) -> list[str]:
+    notes: list[str] = []
+
+    # Loss eases on any long fixed-intake cut: a lighter body burns less and
+    # adaptation suppresses expenditure, so the same calories become a smaller
+    # deficit. This used to be a *warning* comparing first- and last-quarter
+    # SCALE-weight rates - but the first quarter carries the week-1 water and
+    # glycogen drop, which inflated the early rate so reliably that it fired on
+    # 17 of 21 cuts tested, blaming "metabolism" for what was mostly water. On
+    # fat + muscle alone the slowdown is real but near-universal (the late/early
+    # ratio sat at 0.60-0.67 for every deficit and length tried), so no
+    # threshold can single out a problem plan. It is information about every
+    # long cut, and it is reported as that.
+    if len(expected) >= 16 and req.planned_daily_calories < expected[0].maintenance_kcal:
+        q = len(expected) // 4
+        tissue = [p.lean_mass_kg + p.fat_mass_kg for p in expected]
+        early = (tissue[0] - tissue[q]) / q
+        late = (tissue[-q - 1] - tissue[-1]) / q
+        # below ~0.1 kg/week the "easing" is too small to be worth a line
+        if early > 0.1 and late < early:
+            notes.append(
+                "On a fixed intake, weight loss eases over the plan - from about "
+                f"{_mass(early, digits=2)} to about {_mass(late, digits=2)} a week "
+                "once early water loss is set aside. You get lighter and your "
+                "metabolism adapts, so the same calories become a smaller deficit. "
+                "That's normal: to hold the early pace, trim intake a little every "
+                "few weeks or add activity."
+            )
+
+    return notes
+
+
+KG_TO_LB = 2.2046226218
+
+
+def _mass(kg: float, *, sign: bool = False, digits: int = 1) -> str:
+    """A mass in both units. Warnings and notes are plain strings built here,
+    and the API has no idea which unit toggle the reader has on - "+4.2 kg"
+    alone is a number an imperial user has to convert in their head."""
+    spec = f"{'+' if sign else ''}.{digits}f"
+    return f"{kg:{spec}} kg ({kg * KG_TO_LB:{spec}} lb)"
 
 
 def build_projection(req: CalculateRequest) -> CalculateResponse:
@@ -205,4 +244,5 @@ def build_projection(req: CalculateRequest) -> CalculateResponse:
         conservative=runs["conservative"],
         optimistic=runs["optimistic"],
         warnings=_detect_warnings(req, expected),
+        notes=_plan_notes(req, expected),
     )

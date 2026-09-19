@@ -318,7 +318,13 @@ def weekly_body_comp_change(
     ) / ADIPOSE_KCAL_PER_KG
 
     # Essential-fat floor: fat cannot go below it; force the rest onto lean.
-    floor_kg = ESSENTIAL_FAT_FRACTION[sex] * weight_kg
+    # The floor is a limit on further LOSS, never a target to climb to. Input
+    # allows body fat below it (3% minimum for either sex, vs a 12% female
+    # floor), and pinning fat to `floor - fat_mass` there is positive - it
+    # manufactured fat mid-deficit: a woman entered at 6% "gained" 3.6kg of fat
+    # in week one of a diet. Capping the floor at current fat mass means a body
+    # already below it simply stops losing fat.
+    floor_kg = min(ESSENTIAL_FAT_FRACTION[sex] * weight_kg, fat_mass_kg)
     if fat_mass_kg + fat_delta < floor_kg:
         fat_delta = floor_kg - fat_mass_kg
         lean_delta = (

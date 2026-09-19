@@ -25,11 +25,26 @@ from projection import build_projection
 
 app = FastAPI(title="Body Composition Visualizer API", version="0.1.0")
 
+def parse_allowed_origins(raw: str) -> list[str]:
+    """Comma-separated origins -> the exact strings CORS compares against.
+
+    A browser's Origin header is scheme+host+port with no trailing slash, and
+    CORSMiddleware matches it exactly. So "https://a.com, https://b.com" (a
+    space after the comma) silently blocked b.com, and "https://a.com/" (easy to
+    paste straight from the address bar) blocked a.com. Neither shows up in curl
+    or in tests - only in a browser, where it surfaces as "could not reach the
+    calculation server", pointing at the network instead of the config.
+    """
+    return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+
+
 # The React dev server (or deployed frontend) runs on a different origin than
 # the API, so the browser blocks requests unless the API opts in via CORS
 # headers. Origins are env-configurable so a deployment doesn't have to ship
 # with a hardcoded localhost allowlist.
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+allowed_origins = parse_allowed_origins(
+    os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,

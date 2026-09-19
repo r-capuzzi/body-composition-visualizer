@@ -132,3 +132,9 @@ class CalculateResponse(BaseModel):
     optimistic: list[ProjectionPoint]
 
     warnings: list[str]              # plan-health flags for the UI to surface
+
+    # Informational, not alarms: things that are true of a plan and worth
+    # knowing, but that apply to so many plans that styling them as warnings
+    # would teach people to ignore the warning box. Defaults to [] so older
+    # clients and a frontend deployed ahead of the backend both keep working.
+    notes: list[str] = Field(default_factory=list)

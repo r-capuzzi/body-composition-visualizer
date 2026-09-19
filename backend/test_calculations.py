@@ -215,6 +215,26 @@ def test_lean_loss_cap_does_not_bind_on_a_normal_cut():
     assert lean > -0.2 * MAX_WEEKLY_LEAN_LOSS_FRACTION * BASE["lean_mass_kg"] * 5
 
 
+def test_fat_below_the_essential_floor_is_never_raised_in_a_deficit():
+    """Regression: input allows body fat under the sex-specific essential floor
+    (3% minimum vs a 12% female floor), and the floor clamp used to treat the
+    floor as a target - forcing fat UP to it while the person was dieting.
+    A woman entered at 6% gained 3.6kg of fat in week one of a deficit."""
+    _lean, fat = weekly_body_comp_change(
+        energy_balance_kcal_week=-500 * 7,
+        sex=Sex.female,
+        weight_kg=60.0,
+        body_fat_pct=6.0,
+        lean_mass_kg=56.4,
+        fat_mass_kg=3.6,            # floor would be 0.12 * 60 = 7.2kg
+        training_experience=TrainingExperience.intermediate,
+        training_frequency_per_week=3,
+        protein_g_per_kg=2.0,
+        age_years=28,
+    )
+    assert fat <= 1e-9   # no fat gain in a deficit, full stop
+
+
 def test_more_training_frequency_preserves_more_muscle_in_a_deficit():
     leans = [
         weekly_body_comp_change(

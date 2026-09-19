@@ -10,7 +10,7 @@ nothing else exercises.
 
 from fastapi.testclient import TestClient
 
-from main import app
+from main import app, parse_allowed_origins
 
 client = TestClient(app)
 
@@ -37,6 +37,17 @@ def test_health_check():
     resp = client.get("/")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+def test_allowed_origins_tolerates_natural_formatting():
+    # Both of these used to produce an origin that could never match a
+    # browser's Origin header, blocking the frontend with no server-side error.
+    assert parse_allowed_origins("https://a.com, https://b.com") == [
+        "https://a.com",
+        "https://b.com",
+    ]
+    assert parse_allowed_origins("https://a.com/") == ["https://a.com"]
+    assert parse_allowed_origins("https://a.com,,") == ["https://a.com"]
 
 
 def test_health_check_answers_head():
