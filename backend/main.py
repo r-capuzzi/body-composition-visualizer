@@ -46,9 +46,17 @@ def parse_allowed_origins(raw: str) -> list[str]:
 allowed_origins = parse_allowed_origins(
     os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
 )
+# Optional, for origins that can't be listed ahead of time - chiefly Vercel's
+# per-deployment preview URLs (<project>-<hash>-<scope>.vercel.app), which a
+# fixed list can never keep up with; without this every PR preview's requests
+# were blocked and it rendered no projection at all. This API is public and
+# stateless - no credentials, no user data - so CORS here decides which sites'
+# browsers may read its responses, not who can use it (curl always could).
+allowed_origin_regex = os.getenv("ALLOWED_ORIGIN_REGEX") or None
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
     allow_methods=["*"],
     allow_headers=["*"],
 )

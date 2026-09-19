@@ -50,6 +50,53 @@ def test_allowed_origins_tolerates_natural_formatting():
     assert parse_allowed_origins("https://a.com,,") == ["https://a.com"]
 
 
+def test_origin_regex_lets_preview_deployments_through(monkeypatch):
+    """Vercel gives every deployment its own URL, so a fixed allowlist blocked
+    all PR previews. ALLOWED_ORIGIN_REGEX admits them - and only them."""
+    import importlib
+
+    import main as main_module
+
+    # Vercel's two preview forms: <project>-<hash>-<scope> per deployment, and
+    # <project>-git-<branch>-<scope> per branch.
+    monkeypatch.setenv(
+        "ALLOWED_ORIGIN_REGEX",
+        r"https://body-composition-visualizer-(git-[a-z0-9-]+|[a-z0-9]+)-rcapuzzi\.vercel\.app",
+    )
+    try:
+        preview_client = TestClient(importlib.reload(main_module).app)
+
+        def allowed(origin):
+            r = preview_client.options(
+                "/calculate",
+                headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+            )
+            return r.headers.get("access-control-allow-origin") == origin
+
+        assert allowed("https://body-composition-visualizer-elgrofsuf-rcapuzzi.vercel.app")
+        assert allowed(
+            "https://body-composition-visualizer-git-fix-edge-cases-accessibility-and-sharing-rcapuzzi.vercel.app"
+        )
+        assert allowed("http://localhost:3000")                   # fixed list still works
+        assert not allowed("https://evil.example.com")
+        assert not allowed("https://body-composition-visualizer-x-evil.vercel.app")
+    finally:
+        monkeypatch.delenv("ALLOWED_ORIGIN_REGEX")
+        importlib.reload(main_module)
+
+
+def test_no_origin_regex_by_default():
+    # unset means exactly the old behaviour: only the fixed list
+    r = client.options(
+        "/calculate",
+        headers={
+            "Origin": "https://body-composition-visualizer-elgrofsuf-rcapuzzi.vercel.app",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert r.status_code == 400
+
+
 def test_responses_forbid_content_sniffing():
     assert client.get("/").headers["x-content-type-options"] == "nosniff"
     assert client.post("/calculate", json=valid_payload()).headers["x-content-type-options"] == "nosniff"
