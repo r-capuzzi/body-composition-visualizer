@@ -25,6 +25,7 @@ from projection import build_projection
 
 app = FastAPI(title="Body Composition Visualizer API", version="0.1.0")
 
+
 def parse_allowed_origins(raw: str) -> list[str]:
     """Comma-separated origins -> the exact strings CORS compares against.
 
@@ -51,6 +52,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def no_content_sniffing(request, call_next):
+    # Stops a browser from second-guessing Content-Type - relevant here because
+    # this serves HTML (/docs) as well as JSON. Render adds no such headers.
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    return response
 
 
 @app.api_route("/", methods=["GET", "HEAD"])

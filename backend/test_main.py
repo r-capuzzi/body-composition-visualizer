@@ -50,6 +50,11 @@ def test_allowed_origins_tolerates_natural_formatting():
     assert parse_allowed_origins("https://a.com,,") == ["https://a.com"]
 
 
+def test_responses_forbid_content_sniffing():
+    assert client.get("/").headers["x-content-type-options"] == "nosniff"
+    assert client.post("/calculate", json=valid_payload()).headers["x-content-type-options"] == "nosniff"
+
+
 def test_health_check_answers_head():
     """Uptime monitors and Render's probe default to HEAD; a bare @app.get
     replies 405 to it, which looks like an outage."""
