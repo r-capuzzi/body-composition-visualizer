@@ -41,6 +41,27 @@ const hillWeight = (y, y0, spread) => {
   const d = Math.abs(y - y0);
   return d >= spread ? 0 : 0.5 * (1 + Math.cos((Math.PI * d) / spread));
 };
+
+// A `local` region (the arm) fades out RADIALLY from the limb's own axis, not
+// along |x|. The earlier version widened the arm's |x| band by REGION_SPREAD -
+// but that is a Y-axis taper width, and reusing it on X reached deep into the
+// torso: 366 of the 700 vertices it touched sat inside the arm's own minimum
+// |x|, i.e. chest/shoulder, not arm. Worse, scaling about the arm's centre
+// displaces a vertex in proportion to its DISTANCE from that centre, so those
+// torso vertices moved further than the arm did - a 10% bigger bicep shifted
+// 0.7cm of arm but 1.7cm of chest. Distance from the limb axis is the honest
+// measure of "is this part of the arm": measured on the base mesh, arm-surface
+// vertices sit within 0.076 of it while torso vertices run 0.17 out, so full
+// strength to 0.065 covers the limb and the taper reaches zero well short of
+// the torso (armpit geometry in between blends, which is what it should do).
+const ARM_RADIAL_FULL = 0.065;
+const ARM_RADIAL_ZERO = 0.115;
+const radialWeight = (r) => {
+  if (r <= ARM_RADIAL_FULL) return 1;
+  if (r >= ARM_RADIAL_ZERO) return 0;
+  const t = (r - ARM_RADIAL_FULL) / (ARM_RADIAL_ZERO - ARM_RADIAL_FULL);
+  return 0.5 * (1 + Math.cos(Math.PI * t));
+};
 // however far off a bad measurement would otherwise push the ratio, don't let
 // a single region collapse or balloon past this - typos shouldn't wreck the mesh
 const clampRatio = (r) => Math.max(0.6, Math.min(1.6, r));
@@ -105,19 +126,20 @@ function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurem
     const x = pos[i], y = pos[i + 1], z = pos[i + 2];
     let sx = x, sz = z;
     for (const { region, y0, spread, ratio, centres } of ratios) {
-      const { mode, maxAx, minAx = 0, local } = region;
+      const { mode, maxAx, local } = region;
       const w = hillWeight(y, y0, spread);
       if (w <= 0) continue;
-      const s = 1 + w * (ratio - 1);
       if (local) {
-        const sign = x >= 0 ? 1 : -1;
-        if (!inArmBand(x, minAx - spread, maxAx + spread, sign)) continue;
-        const c = centres[sign > 0 ? 0 : 1];
+        const c = centres[x >= 0 ? 0 : 1];
         if (!c) continue;
+        const rw = radialWeight(Math.hypot(sx - c.x, sz - c.z));
+        if (rw <= 0) continue;
+        const s = 1 + w * rw * (ratio - 1);
         sx = c.x + (sx - c.x) * s;
         sz = c.z + (sz - c.z) * s;
       } else {
         if (maxAx != null && Math.abs(x) > maxAx) continue;
+        const s = 1 + w * (ratio - 1);
         sx *= s;
         if (mode !== "width") sz *= s;
       }
@@ -182,6 +204,13 @@ export default function BodyModel({ sex = "male", shape }) {
     m.userData.centerOffset = offset;
     return m;
   }, [data]);
+
+  // Swapping sex builds a whole new geometry (~640KB of vertex + morph buffers)
+  // and useMemo simply drops the old reference - but its GPU-side buffers are
+  // not reachable by the garbage collector, so every toggle leaked one mesh's
+  // worth of VRAM. CLAY is module-level and shared, so it must NOT be disposed
+  // here; only the per-mesh geometry is ours to free.
+  useEffect(() => () => mesh.geometry.dispose(), [mesh]);
 
   useEffect(() => {
     const { muscle = 0.5, fat = 0.5, bmi = data.refBMI, heightM = data.baseHeight, measurements } = shape || {};

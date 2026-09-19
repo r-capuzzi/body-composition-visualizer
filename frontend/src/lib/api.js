@@ -34,7 +34,7 @@ export async function calculateProjection(payload) {
     try {
       const body = await response.json();
       detail = Array.isArray(body.detail)
-        ? body.detail.map((d) => `${d.loc?.at(-1)}: ${d.msg}`).join("; ")
+        ? body.detail.map(describeValidationError).filter(Boolean).join("; ")
         : body.detail;
     } catch {
       detail = null;
@@ -43,4 +43,35 @@ export async function calculateProjection(payload) {
   }
 
   return response.json();
+}
+
+// The API speaks in schema field names; the person reading the error does not.
+// Pydantic hands back e.g. {loc: ["body","body_fat_pct"], msg: "Input should be
+// less than or equal to 60"}, and a model-level check (the BMI plausibility
+// rule) reports loc ["body"] with a "Value error, " prefix - which rendered as
+// the meaningless "body: Value error, ..." before this.
+const FIELD_LABELS = {
+  sex: "Sex",
+  age_years: "Age",
+  height_cm: "Height",
+  weight_kg: "Weight",
+  body_fat_pct: "Body fat %",
+  activity_level: "Activity level",
+  training_experience: "Training experience",
+  training_frequency_per_week: "Training frequency",
+  protein_g_per_kg: "Protein",
+  planned_daily_calories: "Planned daily calories",
+  plan_duration_weeks: "Plan length",
+};
+
+export function describeValidationError(d) {
+  const msg = String(d?.msg ?? "")
+    .replace(/^Value error,\s*/i, "")
+    .replace(/^Input should be/i, "must be");
+  if (!msg) return "";
+  const field = d?.loc?.at(-1);
+  // "body" means the whole request object failed a cross-field rule, and that
+  // message already names the fields it is about - a prefix would add nothing.
+  if (!field || field === "body") return msg;
+  return `${FIELD_LABELS[field] || field}: ${msg}`;
 }

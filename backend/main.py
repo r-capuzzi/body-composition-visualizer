@@ -38,9 +38,14 @@ app.add_middleware(
 )
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def health() -> dict:
-    """Cheap endpoint to confirm the server is up."""
+    """Cheap endpoint to confirm the server is up.
+
+    HEAD is registered alongside GET because uptime monitors (and Render's own
+    probe) default to HEAD, and FastAPI's @app.get does not imply it - a plain
+    @app.get("/") answers HEAD with 405, which reads as an outage.
+    """
     return {"status": "ok"}
 
 

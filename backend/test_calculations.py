@@ -8,6 +8,7 @@ import pytest
 from calculations import (
     ADIPOSE_KCAL_PER_KG,
     LEAN_KCAL_PER_KG,
+    MAX_WEEKLY_LEAN_LOSS_FRACTION,
     age_anabolic_modifier,
     blended_bmr,
     bmr_katch_mcardle,
@@ -184,6 +185,34 @@ def test_essential_lean_floor_blocks_further_lean_loss():
     )
     assert lean >= 21.0 - 21.1 - 1e-6   # cannot drop below the 21.0 kg floor
     assert fat < -6000.0 / ADIPOSE_KCAL_PER_KG * 0.5  # shortfall forced onto fat instead
+
+
+def test_lean_loss_rate_is_capped_at_the_fat_floor():
+    """Regression: with fat pinned at its floor, the energy-conservation step
+    used to divide the whole remaining deficit by LEAN_KCAL_PER_KG (1800) -
+    ~5.2x smaller than ADIPOSE_KCAL_PER_KG - and hand back multi-kg weekly lean
+    losses (-3.55 kg here before the cap, ~7.8 lb of tissue in one week)."""
+    lean, _fat = weekly_body_comp_change(
+        energy_balance_kcal_week=-9688.0,   # ~1384 kcal/day deficit
+        sex=Sex.female,
+        weight_kg=70.0,
+        body_fat_pct=12.5,
+        lean_mass_kg=61.25,
+        fat_mass_kg=8.75,                   # floor is 0.12 * 70 = 8.4, no headroom
+        training_experience=TrainingExperience.untrained,
+        training_frequency_per_week=0,
+        protein_g_per_kg=1.0,
+        age_years=30,
+    )
+    assert lean >= -MAX_WEEKLY_LEAN_LOSS_FRACTION * 61.25 - 1e-9
+    assert lean > -0.5          # ~0.43 kg/week, not 3.55
+
+
+def test_lean_loss_cap_does_not_bind_on_a_normal_cut():
+    """The cap is a ceiling for the starvation regime, not a brake on ordinary
+    dieting - a standard 500 kcal/day deficit must be nowhere near it."""
+    lean, _fat = weekly_body_comp_change(energy_balance_kcal_week=-500 * 7, **BASE)
+    assert lean > -0.2 * MAX_WEEKLY_LEAN_LOSS_FRACTION * BASE["lean_mass_kg"] * 5
 
 
 def test_more_training_frequency_preserves_more_muscle_in_a_deficit():
