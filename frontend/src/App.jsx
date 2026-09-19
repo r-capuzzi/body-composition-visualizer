@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import "./App.css";
 
@@ -64,6 +64,19 @@ const INITIAL_FORM = {
   measure_arm_in: "",
 };
 
+// The optional tape measurements. Bounds are real anthropometric ranges
+// (NHANES/ACE-style references, see project memory) - roughly petite to
+// plus-size/heavyweight - and they do double duty: each input's own min/max,
+// and in buildMeasurements the line between a measurement and a number still
+// being typed.
+const MEASURE_FIELDS = [
+  { key: "shoulder", label: "Shoulder width", cm: [30, 60], in: [12, 24] },
+  { key: "chest", label: "Chest / bust", cm: [70, 160], in: [28, 63] },
+  { key: "waist", label: "Waist", cm: [55, 180], in: [22, 71] },
+  { key: "hip", label: "Hips", cm: [60, 170], in: [24, 67] },
+  { key: "arm", label: "Upper arm", cm: [18, 55], in: [7, 22] },
+];
+
 // Empty-string-safe unit conversion for the optional measurement fields -
 // "" means "not provided", and should stay "" rather than becoming NaN/"0".
 const convertMeasure = (raw, convert) =>
@@ -74,6 +87,7 @@ export default function App() {
   const [units, setUnits] = usePersistentState("bcv.units", "metric");
   const [form, setForm] = usePersistentState("bcv.form", INITIAL_FORM);
   const [measuring, setMeasuring] = useState(false);
+  const [measureError, setMeasureError] = useState("");
 
   const updateField = (name, value) =>
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -176,20 +190,20 @@ export default function App() {
   // (not 0) when blank so BodyModel falls back to the fat/muscle estimate for
   // just that one region instead of collapsing it to zero.
   function buildMeasurements() {
-    const cm = (metricField, imperialField) => {
-      const raw = units === "metric" ? form[metricField] : form[imperialField];
-      if (raw === "" || raw == null) return null;
-      const num = Number(raw);
-      if (!Number.isFinite(num)) return null;
-      return units === "metric" ? num : inToCm(num);
-    };
-    return {
-      shoulder: cm("measure_shoulder_cm", "measure_shoulder_in"),
-      chest: cm("measure_chest_cm", "measure_chest_in"),
-      waist: cm("measure_waist_cm", "measure_waist_in"),
-      hip: cm("measure_hip_cm", "measure_hip_in"),
-      arm: cm("measure_arm_cm", "measure_arm_in"),
-    };
+    const metric = units === "metric";
+    const out = {};
+    for (const { key, cm, in: inches } of MEASURE_FIELDS) {
+      const raw = form[`measure_${key}_${metric ? "cm" : "in"}`];
+      const num = raw === "" || raw == null ? NaN : Number(raw);
+      const [min] = metric ? cm : inches;
+      // Below the field's minimum it's a number still being typed, not a
+      // measurement: "45" passes through "4" on the way, and these apply
+      // live, so the arm visibly shrank to the 60% ratio floor for a
+      // keystroke. A prefix is always smaller, so only the lower bound needs
+      // to gate - an over-max value is deliberate and clampRatio caps it.
+      out[key] = Number.isFinite(num) && num >= min ? (metric ? num : inToCm(num)) : null;
+    }
+    return out;
   }
 
   // "Show current measurements" button: a one-shot snapshot of what the
@@ -201,9 +215,17 @@ export default function App() {
   // fixed earlier (a measurement has to be a snapshot of one moment, not an
   // invariant the slider has to keep re-satisfying). One click, one measure.
   async function fillCurrentMeasurements() {
+    // Measure from the last inputs the backend ACCEPTED, not the live form: an
+    // empty or half-typed height here used to write "NaN" into all five
+    // fields. Once the form settles, `input` equals it anyway.
+    if (!input) {
+      setMeasureError("Wait for your projection to load, then try again.");
+      return;
+    }
     setMeasuring(true);
+    setMeasureError("");
     try {
-      const payload = buildPayload();
+      const payload = input;
       const point = {
         weight_kg: payload.weight_kg,
         body_fat_pct: payload.body_fat_pct,
@@ -237,7 +259,11 @@ export default function App() {
         measure_arm_in: inVal("arm"),
       }));
     } catch (err) {
+      // Logged for whoever debugs it, but also SHOWN - this used to only reach
+      // the console, so a failed model load looked like a button that did
+      // nothing when clicked.
       console.error("Couldn't read the current measurements:", err);
+      setMeasureError("Couldn't read measurements from the 3D model. Please try again.");
     } finally {
       setMeasuring(false);
     }
@@ -246,7 +272,21 @@ export default function App() {
   // The projection recalculates itself whenever the payload changes (debounced).
   // No submit button - drag a slider and the chart follows.
   const payload = buildPayload();
-  const { status, result, error } = useProjection(payload);
+  // `input` is the payload `result` was computed from - see useProjection.
+  const { status, result, input, error } = useProjection(payload);
+
+  // The backend runs on a free tier that sleeps after ~15 minutes idle, and
+  // waking it takes ~20-50s (measured 21.6s cold vs 0.36s warm). Without this
+  // a first-time visitor just watches "Calculating…" and reasonably concludes
+  // the app is broken. Only the very first load can hit it - once a result
+  // exists, useProjection keeps showing it while later requests run.
+  const waitingForFirstResult = status === "loading" && !result;
+  const [slowFirstLoad, setSlowFirstLoad] = useState(false);
+  useEffect(() => {
+    if (!waitingForFirstResult) return;
+    const timer = setTimeout(() => setSlowFirstLoad(true), 4000);
+    return () => clearTimeout(timer);
+  }, [waitingForFirstResult]);
 
   return (
     <div className="app">
@@ -258,10 +298,11 @@ export default function App() {
       <div className="layout">
         <form className="panel" onSubmit={(e) => e.preventDefault()}>
           <div className="form-top">
-            <div className="unit-toggle">
+            <div className="unit-toggle" role="group" aria-label="Units">
               <button
                 type="button"
                 className={units === "metric" ? "active" : ""}
+                aria-pressed={units === "metric"}
                 onClick={() => switchUnits("metric")}
               >
                 Metric
@@ -269,6 +310,7 @@ export default function App() {
               <button
                 type="button"
                 className={units === "imperial" ? "active" : ""}
+                aria-pressed={units === "imperial"}
                 onClick={() => switchUnits("imperial")}
               >
                 Imperial
@@ -324,7 +366,7 @@ export default function App() {
                 <div className="row">
                   <input
                     type="number"
-                    aria-label="feet"
+                    aria-label="Height, feet"
                     step="1"
                     min="3"
                     max="8"
@@ -333,7 +375,7 @@ export default function App() {
                   />
                   <input
                     type="number"
-                    aria-label="inches"
+                    aria-label="Height, inches"
                     step="1"
                     min="0"
                     max="11"
@@ -380,10 +422,11 @@ export default function App() {
           </div>
 
           <div className="field">
-            <label>
+            <label htmlFor="body_fat_pct">
               Body fat: {Number(form.body_fat_pct).toFixed(0)}%
             </label>
             <input
+              id="body_fat_pct"
               type="range"
               min={3}
               max={50}
@@ -409,25 +452,28 @@ export default function App() {
             >
               {measuring ? "Reading the model…" : "Show current measurements"}
             </button>
-            {units === "metric" ? (
-              <>
-                {/* bounds are real anthropometric ranges (NHANES/ACE-style references, see
-                    project memory), not guessed - roughly petite-to-plus-size/heavyweight */}
-                <NumberField label="Shoulder width (cm)" name="measure_shoulder_cm" value={form.measure_shoulder_cm} onChange={updateField} step="any" min={30} max={60} />
-                <NumberField label="Chest / bust (cm)" name="measure_chest_cm" value={form.measure_chest_cm} onChange={updateField} step="any" min={70} max={160} />
-                <NumberField label="Waist (cm)" name="measure_waist_cm" value={form.measure_waist_cm} onChange={updateField} step="any" min={55} max={180} />
-                <NumberField label="Hips (cm)" name="measure_hip_cm" value={form.measure_hip_cm} onChange={updateField} step="any" min={60} max={170} />
-                <NumberField label="Upper arm (cm)" name="measure_arm_cm" value={form.measure_arm_cm} onChange={updateField} step="any" min={18} max={55} />
-              </>
-            ) : (
-              <>
-                <NumberField label="Shoulder width (in)" name="measure_shoulder_in" value={form.measure_shoulder_in} onChange={updateField} step="any" min={12} max={24} />
-                <NumberField label="Chest / bust (in)" name="measure_chest_in" value={form.measure_chest_in} onChange={updateField} step="any" min={28} max={63} />
-                <NumberField label="Waist (in)" name="measure_waist_in" value={form.measure_waist_in} onChange={updateField} step="any" min={22} max={71} />
-                <NumberField label="Hips (in)" name="measure_hip_in" value={form.measure_hip_in} onChange={updateField} step="any" min={24} max={67} />
-                <NumberField label="Upper arm (in)" name="measure_arm_in" value={form.measure_arm_in} onChange={updateField} step="any" min={7} max={22} />
-              </>
+            {measureError && (
+              <p className="muted" role="status" style={{ fontSize: "0.8rem", margin: "-0.5rem 0 0.85rem" }}>
+                {measureError}
+              </p>
             )}
+            {MEASURE_FIELDS.map(({ key, label, cm, in: inches }) => {
+              const unit = units === "metric" ? "cm" : "in";
+              const [min, max] = units === "metric" ? cm : inches;
+              const name = `measure_${key}_${unit}`;
+              return (
+                <NumberField
+                  key={name}
+                  label={`${label} (${unit})`}
+                  name={name}
+                  value={form[name]}
+                  onChange={updateField}
+                  step="any"
+                  min={min}
+                  max={max}
+                />
+              );
+            })}
           </details>
 
           <ActivityPicker
@@ -453,11 +499,12 @@ export default function App() {
           </div>
 
           <div className="field">
-            <label>
+            <label htmlFor="training_frequency_per_week">
               Training frequency:{" "}
               {describeTrainingFrequency(Number(form.training_frequency_per_week))}
             </label>
             <input
+              id="training_frequency_per_week"
               type="range"
               min={0}
               max={7}
@@ -516,15 +563,21 @@ export default function App() {
               <ResultsPanel
                 result={result}
                 units={units}
-                sex={payload.sex}
-                heightCm={payload.height_cm}
+                // the inputs this result was computed from, NOT the live form,
+                // which mid-edit can hold an empty or half-typed height
+                sex={input.sex}
+                heightCm={input.height_cm}
                 loading={status === "loading"}
                 measurements={buildMeasurements()}
               />
             </Suspense>
           ) : (
-            <div className="panel muted">
-              {status === "loading" ? "Calculating…" : "Enter your details to see a projection."}
+            <div className="panel muted" role="status">
+              {status !== "loading"
+                ? "Enter your details to see a projection."
+                : slowFirstLoad
+                ? "Waking up the calculation server… It sleeps when nobody's using it, so the first projection can take up to a minute. After that it's instant."
+                : "Calculating…"}
             </div>
           )}
         </div>

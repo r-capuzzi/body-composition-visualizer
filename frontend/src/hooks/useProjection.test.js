@@ -54,4 +54,16 @@ test("keeps the last good result when a later request errors", async () => {
   expect(result.current.status).toBe("error");
   expect(result.current.error).toMatch(/too small/);
   expect(result.current.result).toEqual({ value: "good" }); // not wiped
+  // ...and still paired with the inputs that produced it, not the bad ones
+  expect(result.current.input).toEqual({ calories: 2400 });
+});
+
+test("reports the input each result was computed from", async () => {
+  calculateProjection.mockResolvedValue({ ok: 1 });
+  const { result } = renderHook(() =>
+    useProjection({ height_cm: 178 }, { debounceMs: 50 })
+  );
+  expect(result.current.input).toBeNull();
+  await advance(50);
+  expect(result.current.input).toEqual({ height_cm: 178 });
 });

@@ -271,6 +271,16 @@
   font-size:.9rem;
 }
 
+.note {
+  border-left:3px solid var(--border);
+  background:var(--panel-2);
+  color:var(--text-dim);
+  border-radius:4px;
+  margin-bottom:.5rem;
+  padding:.6rem .8rem;
+  font-size:.85rem;
+}
+
 .chart-tabs {
   flex-wrap:wrap;
   gap:.3rem;
