@@ -171,6 +171,17 @@
   cursor:grabbing;
 }
 
+/* The orbit controls put an inline touch-action:none on the canvas's wrapper,
+   and touch-action combines up the ancestor chain - so every touch on the
+   model was swallowed, and on a phone a vertical swipe over it (300px, ~37%
+   of the screen) couldn't scroll the page. pan-y hands vertical swipes back to
+   the browser; horizontal swipes still rotate the model. Vertical tilt is
+   clamped to a narrow band anyway, so touch loses nothing that matters.
+   !important because it has to beat an inline style. Mouse is unaffected. */
+.avatar-scene > div {
+  touch-action:pan-y !important;
+}
+
 .avatar-scene-failed {
   cursor:default;
   display:flex;
