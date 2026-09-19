@@ -96,6 +96,20 @@ ESSENTIAL_FAT_FRACTION = {Sex.male: 0.04, Sex.female: 0.12}
 # what ESSENTIAL_FAT_FRACTION already prevents on the fat side.
 ESSENTIAL_LEAN_FRACTION = {Sex.male: 0.35, Sex.female: 0.30}
 
+# Ceiling on how fast lean tissue can be lost, as a fraction of CURRENT lean
+# mass per week. A floor alone is not enough: it bounds where lean can end up,
+# not how fast it gets there, and the fat-floor branch in
+# weekly_body_comp_change can ask for multi-kg weekly lean losses (see the
+# comment there for why).
+#
+# Anchor: the Minnesota Starvation Experiment (Keys et al. 1950) held lean men
+# at roughly 50% of maintenance for 24 weeks and drove them to ~5% body fat -
+# i.e. the exact regime this cap governs. Their fat-free mass fell ~10 kg from
+# a ~59 kg baseline over those 24 weeks: ~0.4 kg/week, ~0.7% of FFM per week.
+# That is close to a physiological maximum, not a typical rate, which is what
+# makes it the right number for a ceiling.
+MAX_WEEKLY_LEAN_LOSS_FRACTION = 0.007
+
 # Body-fat % where partitioning is "neutral" (favorability == 1.0).
 BODY_FAT_NEUTRAL_PCT = {Sex.male: 15.0, Sex.female: 23.0}
 
@@ -310,6 +324,27 @@ def weekly_body_comp_change(
         lean_delta = (
             energy_balance_kcal_week - fat_delta * ADIPOSE_KCAL_PER_KG
         ) / LEAN_KCAL_PER_KG
+
+    # Rate limit on lean loss. The branch above divides a pinned deficit by
+    # LEAN_KCAL_PER_KG, which is ~5.2x smaller than ADIPOSE_KCAL_PER_KG - the
+    # same kcal therefore "buys" 5.2x more kg of lean than of fat, so a deep
+    # deficit at the fat floor asks for several kg of lean per week. Both rules
+    # feeding it are individually right; the product is not survivable.
+    max_lean_loss_kg = MAX_WEEKLY_LEAN_LOSS_FRACTION * lean_mass_kg
+    if lean_delta < -max_lean_loss_kg:
+        lean_delta = -max_lean_loss_kg
+        # Prefer to take the energy from fat instead, where there is room.
+        fat_delta = (
+            energy_balance_kcal_week - lean_delta * LEAN_KCAL_PER_KG
+        ) / ADIPOSE_KCAL_PER_KG
+        if fat_mass_kg + fat_delta < floor_kg:
+            # Both compartments are now constrained, so the planned deficit
+            # cannot be fully realised. That is the physically honest outcome:
+            # a real body closes this gap by suppressing expenditure far harder
+            # than metabolic_adaptation_factor()'s 15% cap models (Minnesota
+            # measured ~40% RMR suppression), not by shedding impossible
+            # amounts of tissue. The unrealised energy is absorbed there.
+            fat_delta = floor_kg - fat_mass_kg
 
     # Mirror image on lean: a long enough deficit at fixed calories can push
     # this past the fat floor above and keep drawing the shortfall from lean

@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from "react";
 
 import { bodyParamsFromStats, ffmi } from "../lib/bodyParams";
 import { kgToLb } from "../lib/units";
+import ErrorBoundary from "./ErrorBoundary";
 import ProjectionChart from "./ProjectionChart";
 import TimelineScrubber from "./TimelineScrubber";
 
@@ -57,9 +58,20 @@ export default function ResultsPanel({
         {loading && <span className="updating-dot"> updating…</span>}
       </h2>
 
-      <Suspense fallback={<div className="avatar-scene" />}>
-        <AvatarScene sex={sex} shape={body} />
-      </Suspense>
+      <ErrorBoundary
+        resetKey={sex}
+        fallback={
+          <div className="avatar-scene avatar-scene-failed">
+            <p className="muted">
+              The 3D model couldn’t be loaded. Your projection below is unaffected.
+            </p>
+          </div>
+        }
+      >
+        <Suspense fallback={<div className="avatar-scene" />}>
+          <AvatarScene sex={sex} shape={body} />
+        </Suspense>
+      </ErrorBoundary>
       <TimelineScrubber weeks={weeks} week={week} setWeek={setSelectedWeek} />
       <p className="muted" style={{ fontSize: "0.8rem", margin: "0.35rem 0 1.25rem" }}>
         {week === 0

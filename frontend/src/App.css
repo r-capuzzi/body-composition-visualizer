@@ -171,6 +171,15 @@
   cursor:grabbing;
 }
 
+.avatar-scene-failed {
+  cursor:default;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:1.5rem;
+}
+
 @media (width<=820px) {
   .avatar-scene {
     height:300px;

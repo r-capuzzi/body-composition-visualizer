@@ -102,8 +102,8 @@ class CalculateRequest(BaseModel):
         bmi = self.weight_kg / (self.height_cm / 100) ** 2
         if not (10 <= bmi <= 75):
             raise ValueError(
-                f"height_cm and weight_kg combine to an implausible BMI ({bmi:.0f}); "
-                "double-check these values"
+                f"Height and weight combine to an implausible BMI of {bmi:.0f} - "
+                "please double-check them"
             )
         return self
 

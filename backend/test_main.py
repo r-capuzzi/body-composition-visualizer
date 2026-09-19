@@ -39,6 +39,12 @@ def test_health_check():
     assert resp.json() == {"status": "ok"}
 
 
+def test_health_check_answers_head():
+    """Uptime monitors and Render's probe default to HEAD; a bare @app.get
+    replies 405 to it, which looks like an outage."""
+    assert client.head("/").status_code == 200
+
+
 def test_calculate_valid_request_returns_projection():
     resp = client.post("/calculate", json=valid_payload())
     assert resp.status_code == 200

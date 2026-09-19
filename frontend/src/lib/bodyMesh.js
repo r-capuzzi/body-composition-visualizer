@@ -195,8 +195,20 @@ function loadBodyData(sex) {
   if (entry) return entry;
   entry = { status: "pending" };
   entry.promise = fetch(url)
-    .then((r) => r.arrayBuffer())
+    .then((r) => {
+      // fetch only rejects on network failure - a 404 or a 500 resolves
+      // normally, so without this the error page's bytes get parsed as mesh
+      // data and either blow up on a confusing RangeError or read a garbage
+      // vertex count and try to allocate an absurd typed array.
+      if (!r.ok) {
+        throw new Error(`Could not load the ${sex} body model (HTTP ${r.status}).`);
+      }
+      return r.arrayBuffer();
+    })
     .then((buf) => {
+      if (buf.byteLength < HEADER) {
+        throw new Error(`The ${sex} body model file looks truncated or corrupt.`);
+      }
       const dv = new DataView(buf);
       const vc = dv.getUint32(4, true);
       const tc = dv.getUint32(8, true);
@@ -233,6 +245,13 @@ function loadBodyData(sex) {
     .catch((err) => {
       entry.status = "error";
       entry.err = err;
+      // Drop the failed entry so a later attempt refetches. The caller that is
+      // mid-render still holds this object and still sees status "error", so
+      // it fails now as it should - but a transient blip (these files are
+      // ~940KB over whatever connection the user has) would otherwise be
+      // cached as permanent, and no amount of retrying could ever recover
+      // without a full page reload.
+      cache.delete(url);
       throw err;
     });
   cache.set(url, entry);
