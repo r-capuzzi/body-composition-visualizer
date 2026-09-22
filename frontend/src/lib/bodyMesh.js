@@ -274,6 +274,37 @@ function segmentTorso(base, adj, y0, scale) {
 
 const DELTA_SMOOTH_PASSES = 6;
 
+// The lean target is MakeHuman's underweight body, not a lower-fat one: on
+// its own it took the male arm from 33.1 to 26.3cm and the chest from 94 to
+// 86, so at constant weight an 80kg man at 6% (the most lean mass of any
+// setting) rendered skinnier than at 10-20% - arm 31.3cm vs 35.3 at 20%,
+// shrinking as muscle went up. Its waist change (-5.3cm) is about what 17
+// points of fat off the belly does; the arms and chest were far past that.
+// The heavy target is the app's own map of where fat is stored, and at
+// constant weight the lean end (6%) and heavy end (40%) are the same 17
+// points of fat either side of neutral - so fat loss is capped, per vertex,
+// at a fraction of the fat gain there. Direction is kept (the lean target's
+// shape detail stays); only the overreach goes.
+// The fraction is pinned by skinfolds: US men average a ~12mm triceps
+// skinfold (NHANES anthropometric reference data) - a double layer, so ~6mm
+// of arm fat, ~2mm of it essential - so neutral -> 6% can take ~4mm off the
+// arm's radius, and the heavy target moves the arm ~10mm: c <= 0.4. The
+// belly needs ~8mm of its ~35mm heavy offset to keep the waist change the
+// lean target already got right: c >= 0.24. 0.3 sits inside both; a full-
+// cap version (c = 1) barely changed anything (arm 26.3 -> 28.3cm).
+const LEAN_OF_HEAVY = 0.3;
+export function capLeanByHeavy(dLean, dHeavy, c = LEAN_OF_HEAVY) {
+  const out = Float32Array.from(dLean);
+  for (let j = 0; j < out.length; j += 3) {
+    const l = Math.hypot(out[j], out[j + 1], out[j + 2]);
+    const h = c * Math.hypot(dHeavy[j], dHeavy[j + 1], dHeavy[j + 2]);
+    if (l <= h || l === 0) continue;
+    const k = h / l;
+    out[j] *= k; out[j + 1] *= k; out[j + 2] *= k;
+  }
+  return out;
+}
+
 // Uniform-Laplacian smoothing of a per-vertex offset field: each pass moves
 // every offset halfway toward the mean of its neighbours'.
 export function smoothDeltas(delta, adj, iters) {
@@ -400,6 +431,7 @@ function loadBodyData(sex) {
       // which were the problems - so Laplacian, chosen by side-by-side renders.
       const adj = buildAdjacency(vc, data.index);
       for (const k of ["dMuscle", "dHeavy", "dLean"]) data[k] = smoothDeltas(data[k], adj, DELTA_SMOOTH_PASSES);
+      data.dLean = capLeanByHeavy(data.dLean, data.dHeavy);
       data.scale = data.baseHeight / MALE_REFERENCE_HEIGHT;
       data.regions = regionsForScale(data.scale);
       data.landmarks = findAllLandmarks(data.base, data.index, data.scale);
