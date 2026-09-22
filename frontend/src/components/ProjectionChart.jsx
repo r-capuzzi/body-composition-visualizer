@@ -67,12 +67,13 @@ export default function ProjectionChart({ result, units, markerWeek }) {
 
   return (
     <div>
-      <div className="chart-tabs">
+      <div className="chart-tabs" role="group" aria-label="Chart metric">
         {METRICS.map((m) => (
           <button
             key={m.key}
             type="button"
             className={m.key === metricKey ? "active" : ""}
+            aria-pressed={m.key === metricKey}
             onClick={() => setMetricKey(m.key)}
           >
             {m.label}

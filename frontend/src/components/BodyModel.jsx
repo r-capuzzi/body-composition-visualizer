@@ -2,7 +2,7 @@ import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
 import { clamp01 } from "../lib/bodyParams";
-import { MEASURE_REGIONS, inArmBand, cmToRawTarget, useBodySuspense } from "../lib/bodyMesh";
+import { inArmBand, cmToRawTarget, useBodySuspense } from "../lib/bodyMesh";
 
 const CLAY = new THREE.MeshStandardMaterial({
   color: "#c78a66",
@@ -54,12 +54,16 @@ const hillWeight = (y, y0, spread) => {
 // vertices sit within 0.076 of it while torso vertices run 0.17 out, so full
 // strength to 0.065 covers the limb and the taper reaches zero well short of
 // the torso (armpit geometry in between blends, which is what it should do).
+// These, REGION_SPREAD above, and the region bands were all measured on the
+// male mesh, so every use below multiplies by `data.scale` (1 for male; see
+// MALE_REFERENCE_HEIGHT in lib/bodyMesh.js for why that matters).
 const ARM_RADIAL_FULL = 0.065;
 const ARM_RADIAL_ZERO = 0.115;
-const radialWeight = (r) => {
-  if (r <= ARM_RADIAL_FULL) return 1;
-  if (r >= ARM_RADIAL_ZERO) return 0;
-  const t = (r - ARM_RADIAL_FULL) / (ARM_RADIAL_ZERO - ARM_RADIAL_FULL);
+const radialWeight = (r, scale) => {
+  const full = ARM_RADIAL_FULL * scale, zero = ARM_RADIAL_ZERO * scale;
+  if (r <= full) return 1;
+  if (r >= zero) return 0;
+  const t = (r - full) / (zero - full);
   return 0.5 * (1 + Math.cos(Math.PI * t));
 };
 // however far off a bad measurement would otherwise push the ratio, don't let
@@ -75,7 +79,7 @@ const clampRatio = (r) => Math.max(0.6, Math.min(1.6, r));
  * adjusted size first - something a shader can't feed back into itself.
  */
 function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurements, frameScale) {
-  const { base, dMuscle, dHeavy, dLean, landmarks, neutralMeasurements } = data;
+  const { base, dMuscle, dHeavy, dLean, landmarks, neutralMeasurements, regions, scale } = data;
   for (let j = 0; j < base.length; j++) {
     pos[j] = base[j] + infMuscle * dMuscle[j] + infHeavy * dHeavy[j] + infLean * dLean[j];
   }
@@ -88,14 +92,15 @@ function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurem
   //    genuinely does shift a little as muscle/fat change, and scaling around
   //    a stale centre would offset the arm sideways instead of thickening it.
   const ratios = [];
-  for (const key of Object.keys(MEASURE_REGIONS)) {
+  for (const key of Object.keys(regions)) {
     const cm = measurements[key];
     if (cm == null || !Number.isFinite(cm) || cm <= 0) continue;
-    const region = MEASURE_REGIONS[key];
-    const { mode, maxAx, minAx = 0, local } = region;
+    const region = regions[key];
+    const { maxAx, minAx = 0, bandHalf, local } = region;
     const y0 = landmarks[key];
+    if (neutralMeasurements[key] == null) continue; // no vertices at this landmark
     const neutralReal = neutralMeasurements[key] * frameScale;
-    if (neutralReal == null || neutralReal < 0.01) continue; // guard a degenerate slice
+    if (neutralReal < 0.01) continue; // guard a degenerate slice
 
     let centres;
     if (local) {
@@ -104,7 +109,7 @@ function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurem
       // x=+-0.23, not 0 (verified this band is arm-only, not arm+chest
       // bleed, by listing every vertex in it and checking z formed one
       // continuous ring instead of two separated clusters).
-      const yLo = y0 - 0.03, yHi = y0 + 0.03;
+      const yLo = y0 - bandHalf, yHi = y0 + bandHalf;
       centres = [1, -1].map((sign) => {
         let n = 0, cx = 0, cz = 0;
         for (let i = 0; i < pos.length; i += 3) {
@@ -117,7 +122,7 @@ function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurem
       if (centres.every((c) => !c)) continue;
     }
     const target = cmToRawTarget(key, cm);
-    ratios.push({ region, y0, spread: REGION_SPREAD[key], ratio: clampRatio(target / neutralReal), centres });
+    ratios.push({ region, y0, spread: REGION_SPREAD[key] * scale, ratio: clampRatio(target / neutralReal), centres });
   }
   if (ratios.length === 0) return;
 
@@ -132,7 +137,7 @@ function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurem
       if (local) {
         const c = centres[x >= 0 ? 0 : 1];
         if (!c) continue;
-        const rw = radialWeight(Math.hypot(sx - c.x, sz - c.z));
+        const rw = radialWeight(Math.hypot(sx - c.x, sz - c.z), scale);
         if (rw <= 0) continue;
         const s = 1 + w * rw * (ratio - 1);
         sx = c.x + (sx - c.x) * s;

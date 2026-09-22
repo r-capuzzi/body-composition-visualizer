@@ -225,10 +225,28 @@ def protein_catabolic_modifier(protein_g_per_kg: float) -> float:
 
 
 def weekly_muscle_gain_cap_kg(
-    sex: Sex, weight_kg: float, training_experience: TrainingExperience
+    sex: Sex,
+    weight_kg: float,
+    training_experience: TrainingExperience,
+    lean_mass_kg: float | None = None,
 ) -> float:
-    """The monthly %-bodyweight ceiling converted to an absolute kg/week limit."""
-    monthly_kg = MUSCLE_GAIN_RATE_PCT_BW_PER_MONTH[training_experience] * weight_kg
+    """The monthly %-bodyweight ceiling converted to an absolute kg/week limit.
+
+    The source rates are % of bodyweight for typical trainees, but applied to
+    TOTAL bodyweight they let fat mass raise the ceiling: an untrained 160kg
+    man at 50% body fat got 15.4kg/yr of headroom against 7.2kg/yr for a 75kg
+    man at 15%, with barely more lean mass (80 vs 64kg) - the most optimistic
+    projections went to the heaviest users. So the rate applies to the
+    bodyweight this LEAN mass would have at the neutral body fat (15% men,
+    23% women), capped at actual bodyweight: identical at or below neutral
+    body fat, smaller above it, never larger - in keeping with the model's
+    under-promise rule.
+    """
+    basis_kg = weight_kg
+    if lean_mass_kg is not None:
+        neutral_weight = lean_mass_kg / (1.0 - BODY_FAT_NEUTRAL_PCT[sex] / 100.0)
+        basis_kg = min(weight_kg, neutral_weight)
+    monthly_kg = MUSCLE_GAIN_RATE_PCT_BW_PER_MONTH[training_experience] * basis_kg
     if sex == Sex.female:
         monthly_kg *= FEMALE_MUSCLE_RATE_FACTOR
     return monthly_kg * 12 / 52  # months -> weeks
@@ -269,7 +287,7 @@ def weekly_body_comp_change(
     prot_cat = protein_catabolic_modifier(protein_g_per_kg)
 
     anabolic_potential = (
-        weekly_muscle_gain_cap_kg(sex, weight_kg, training_experience)
+        weekly_muscle_gain_cap_kg(sex, weight_kg, training_experience, lean_mass_kg)
         * stimulus
         * age_mod
         * prot_ana
@@ -318,7 +336,13 @@ def weekly_body_comp_change(
     ) / ADIPOSE_KCAL_PER_KG
 
     # Essential-fat floor: fat cannot go below it; force the rest onto lean.
-    floor_kg = ESSENTIAL_FAT_FRACTION[sex] * weight_kg
+    # The floor is a limit on further LOSS, never a target to climb to. Input
+    # allows body fat below it (3% minimum for either sex, vs a 12% female
+    # floor), and pinning fat to `floor - fat_mass` there is positive - it
+    # manufactured fat mid-deficit: a woman entered at 6% "gained" 3.6kg of fat
+    # in week one of a diet. Capping the floor at current fat mass means a body
+    # already below it simply stops losing fat.
+    floor_kg = min(ESSENTIAL_FAT_FRACTION[sex] * weight_kg, fat_mass_kg)
     if fat_mass_kg + fat_delta < floor_kg:
         fat_delta = floor_kg - fat_mass_kg
         lean_delta = (

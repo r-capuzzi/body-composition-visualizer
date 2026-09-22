@@ -128,7 +128,57 @@ def test_long_fixed_calorie_cut_plateaus():
     early = (pts[0].weight_kg - pts[6].weight_kg) / 6
     late = (pts[-7].weight_kg - pts[-1].weight_kg) / 6
     assert late < 0.5 * early                       # loss rate roughly halves
-    assert any("adapts" in w or "slows" in w for w in resp.warnings)
+    # ...and the user is told, as information rather than an alarm
+    assert any("eases" in n for n in resp.notes)
+    assert not any("eases" in w for w in resp.warnings)
+
+
+def test_plateau_note_ignores_the_week_one_water_drop():
+    """The easing note is measured on fat + muscle, not scale weight. On scale
+    weight the week-1 water/glycogen drop inflated the 'early' rate and made
+    ordinary cuts look like they were stalling."""
+    resp = build_projection(make_request(daily_calorie_delta=-600, plan_duration_weeks=24))
+    pts = resp.expected
+    q = len(pts) // 4
+    tissue_early = ((pts[0].lean_mass_kg + pts[0].fat_mass_kg)
+                    - (pts[q].lean_mass_kg + pts[q].fat_mass_kg)) / q
+    scale_early = (pts[0].weight_kg - pts[q].weight_kg) / q
+    assert scale_early > tissue_early          # the water really does inflate it
+    note = next(n for n in resp.notes if "eases" in n)
+    assert f"{tissue_early:.2f} kg" in note    # and the note reports the tissue rate
+
+
+def test_plateau_note_only_on_long_real_cuts():
+    # every long cut gets it - even a mild one, since some easing is universal
+    assert any("eases" in n for n in build_projection(
+        make_request(daily_calorie_delta=-300, plan_duration_weeks=24)).notes)
+    # but not a short plan, a trivial deficit, or a surplus
+    assert build_projection(make_request(daily_calorie_delta=-500, plan_duration_weeks=8)).notes == []
+    assert build_projection(make_request(daily_calorie_delta=-80, plan_duration_weeks=24)).notes == []
+    assert build_projection(make_request(daily_calorie_delta=+250, plan_duration_weeks=24)).notes == []
+
+
+def test_body_fat_entered_below_essential_is_flagged_as_a_likely_underestimate():
+    resp = build_projection(make_request(daily_calorie_delta=-300, sex=Sex.female,
+                                         weight_kg=60.0, height_cm=165.0, body_fat_pct=8.0))
+    essential = [w for w in resp.warnings if "essential" in w]
+    assert len(essential) == 1                       # one message, not two
+    assert "underestimate" in essential[0]
+    assert "approaches" not in essential[0]          # "8% approaches 12%" was wrong
+
+
+def test_nearing_essential_fat_from_above_still_warns():
+    resp = build_projection(make_request(daily_calorie_delta=-600, plan_duration_weeks=40,
+                                         body_fat_pct=12.0))
+    assert any("close to the essential minimum for men" in w for w in resp.warnings)
+
+
+def test_warning_masses_are_given_in_both_units():
+    """Warnings are built as plain strings on the backend, which can't know the
+    reader's unit toggle - a bare "kg" leaves imperial users converting."""
+    resp = build_projection(make_request(daily_calorie_delta=+900))
+    fat_warning = next(w for w in resp.warnings if "outpaces" in w)
+    assert " kg (" in fat_warning and " lb)" in fat_warning
 
 
 # --------------------------------------------------------------------------- #

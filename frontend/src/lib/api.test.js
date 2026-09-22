@@ -27,6 +27,20 @@ describe("describeValidationError", () => {
     );
   });
 
+  test("states a weight bound in both units, since the bound is metric but the user may not be", () => {
+    // An imperial user who clears the field to retype it sees this; "30" alone
+    // reads as 30 lb, when the real floor is 30 kg.
+    expect(
+      describeValidationError({ loc: ["body", "weight_kg"], msg: "Input should be greater than 30" })
+    ).toBe("Weight: must be greater than 30 kg (66 lb)");
+  });
+
+  test("states a height bound in both units", () => {
+    expect(
+      describeValidationError({ loc: ["body", "height_cm"], msg: "Input should be less than 250" })
+    ).toBe("Height: must be less than 250 cm (8 ft 2 in)");
+  });
+
   test("falls back to the raw field name when it has no friendly label", () => {
     expect(
       describeValidationError({ loc: ["body", "some_new_field"], msg: "Input should be a number" })

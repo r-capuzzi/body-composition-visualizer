@@ -48,6 +48,41 @@ test("defaults to the end of the plan and shows the net change", () => {
   expect(screen.getAllByText("−2.0 kg").length).toBeGreaterThan(0);
 });
 
+test("notes render in their own style, not as warnings", () => {
+  const result = {
+    ...fakeResult,
+    warnings: ["Protein is low."],
+    notes: ["On a fixed intake, weight loss eases over the plan."],
+  };
+  render(<ResultsPanel result={result} units="metric" heightCm={178} />);
+  expect(screen.getByText("Protein is low.")).toHaveClass("warning");
+  const note = screen.getByText(/weight loss eases/);
+  expect(note).toHaveClass("note");
+  expect(note).not.toHaveClass("warning");
+});
+
+test("renders against a backend response that has no notes field", () => {
+  // fakeResult has no `notes` - what a pre-notes backend sends
+  render(<ResultsPanel result={fakeResult} units="metric" heightCm={178} />);
+  expect(screen.getByText("Change through week 4")).toBeInTheDocument();
+});
+
+test("the plan label reads naturally, including right at maintenance", () => {
+  const label = (d) => {
+    const { unmount } = render(
+      <ResultsPanel result={{ ...fakeResult, daily_calorie_delta: d }} units="metric" heightCm={178} />
+    );
+    const text = screen.getByText("Your plan").previousSibling.textContent;
+    unmount();
+    return text;
+  };
+  // typing the displayed (rounded) maintenance back in lands a fraction off
+  expect(label(-0.2)).toBe("at maintenance");
+  expect(label(0.3)).toBe("at maintenance");
+  expect(label(-293)).toBe("293 kcal deficit");   // not "-293 kcal deficit"
+  expect(label(315)).toBe("315 kcal surplus");
+});
+
 test("renders lean/fat change per scenario", () => {
   render(<ResultsPanel result={fakeResult} units="metric" heightCm={178} />);
   expect(screen.getByText("Conservative")).toBeInTheDocument();

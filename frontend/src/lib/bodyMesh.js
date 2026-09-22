@@ -63,35 +63,63 @@ function findLandmark(base, index, yFrom, yTo, maxAx, metric, wantMax) {
   return bestY;
 }
 
-// Search ranges are absolute metres in this mesh's own (untranslated) space,
-// deliberately narrow - wide enough to cover build-to-build variation in
-// where each landmark falls, not so wide they'd find the wrong anatomical
-// feature entirely (e.g. hip's range stops well short of where upper-thigh
-// flare would out-measure the actual hip). maxAx=0.19-0.22 for chest/shoulder
-// keeps the search from ever seeing the contaminated, arm-inflated part of
-// the scan; waist/hip don't need it as tight since the outstretched arm
-// doesn't reach that low.
-function findAllLandmarks(base, index) {
-  return {
-    hip: findLandmark(base, index, 0.86, 0.94, 0.32, "perimeter", true),
-    waist: findLandmark(base, index, 0.96, 1.12, 0.32, "perimeter", false),
-    chest: findLandmark(base, index, 1.15, 1.26, 0.19, "perimeter", true),
-    shoulder: findLandmark(base, index, 1.28, 1.44, 0.22, "width", true),
-    // the arm's `local` measurement mode (below) isn't a global-origin slice
-    // at all - it centres on the arm's own mean position instead - so the
-    // min/max landmark search above doesn't apply to it. Fixed at the upper-
-    // arm band verified arm-only, not arm+chest bleed (see measureRegions).
-    arm: 1.33,
-  };
+// Every distance below was tuned by hand on the MALE mesh (1.733m tall), and
+// used to be applied as absolute metres to both meshes. The female mesh is
+// 1.593m, so each window landed somewhere else on her body: the arm band sat
+// above her arms (zero vertices - the arm override silently did nothing), the
+// chest slice ran through her armpit where arm and torso are one surface
+// (110cm neutral chest), and the hip search pinned above her hips (87.5cm,
+// smaller than that chest). So they are written here in male-mesh units and
+// scaled per mesh by baseHeight / MALE_REFERENCE_HEIGHT - identical for the
+// male mesh by construction, and on the female mesh the chest landmark lands
+// at 72.6% of height, the same fraction as the male's.
+export const MALE_REFERENCE_HEIGHT = 1.733;
+
+// Search windows are deliberately narrow - wide enough to cover build-to-build
+// variation in where each landmark falls, not so wide they'd find the wrong
+// anatomical feature (hip's window stops short of where upper-thigh flare
+// would out-measure the actual hip). maxAx=0.19-0.22 for chest/shoulder keeps
+// the search from seeing the arm-inflated part of the scan; waist/hip don't
+// need it as tight since the outstretched arm doesn't reach that low.
+const LANDMARK_WINDOWS = {
+  hip: [0.86, 0.94, 0.32, "perimeter", true],
+  waist: [0.96, 1.12, 0.32, "perimeter", false],
+  chest: [1.15, 1.26, 0.19, "perimeter", true],
+  shoulder: [1.28, 1.44, 0.22, "width", true],
+};
+
+function findAllLandmarks(base, index, scale = 1) {
+  const out = {};
+  for (const [key, [yFrom, yTo, maxAx, metric, wantMax]] of Object.entries(LANDMARK_WINDOWS)) {
+    out[key] = findLandmark(base, index, yFrom * scale, yTo * scale, maxAx * scale, metric, wantMax);
+  }
+  // the arm's `local` measurement (below) centres on the arm's own mean
+  // position instead of slicing about the origin, so the min/max search above
+  // doesn't apply to it - fixed at the upper-arm band, verified arm-only on
+  // both meshes (one continuous ring of vertices, not arm + torso bleed).
+  out.arm = 1.33 * scale;
+  return out;
 }
 
+// In male-mesh units - use regionsForScale() for a given mesh. `bandHalf` is
+// the arm band's half-height in y.
 export const MEASURE_REGIONS = {
   shoulder: { mode: "width", maxAx: 0.22 },
   chest: { mode: "circumference", maxAx: 0.19 },
   waist: { mode: "circumference", maxAx: 0.32 },
   hip: { mode: "circumference", maxAx: 0.32 },
-  arm: { mode: "circumference", minAx: 0.19, maxAx: 0.27, local: true },
+  arm: { mode: "circumference", minAx: 0.19, maxAx: 0.27, bandHalf: 0.03, local: true },
 };
+
+const SCALED_KEYS = ["maxAx", "minAx", "bandHalf"];
+export function regionsForScale(scale) {
+  const out = {};
+  for (const [key, region] of Object.entries(MEASURE_REGIONS)) {
+    out[key] = { ...region };
+    for (const k of SCALED_KEYS) if (region[k] != null) out[key][k] = region[k] * scale;
+  }
+  return out;
+}
 
 // True for a vertex whose |x| falls in this region's arm band, on the given
 // side (sign > 0 for the +x arm, < 0 for the -x arm). Torso regions (no
@@ -102,17 +130,16 @@ export const inArmBand = (x, minAx, maxAx, sign) =>
 // Raw (pre-frameScale, mesh-unit) measurement for every region against
 // WHATEVER position array is passed in - the unmorphed base (a fixed
 // calibration reference, see BodyModel.jsx) or a live muscle/fat blend (to
-// show the current estimate in the form). Verified the arm's band (y
-// 1.30-1.36, |x| 0.19-0.27) is arm-only, not arm+chest bleed, by listing
-// every vertex in it and checking z formed one continuous ring instead of
-// two separated clusters.
-export function measureRegions(pos, index, landmarks) {
+// show the current estimate in the form). `regions` must be the scaled set
+// for this mesh (data.regions) - the unscaled MEASURE_REGIONS only fit the
+// male mesh.
+export function measureRegions(pos, index, landmarks, regions = MEASURE_REGIONS) {
   const out = {};
-  for (const key of Object.keys(MEASURE_REGIONS)) {
-    const { mode, maxAx, minAx = 0, local } = MEASURE_REGIONS[key];
+  for (const key of Object.keys(regions)) {
+    const { mode, maxAx, minAx = 0, bandHalf = 0.03, local } = regions[key];
     const y0 = landmarks[key];
     if (local) {
-      const yLo = y0 - 0.03, yHi = y0 + 0.03;
+      const yLo = y0 - bandHalf, yHi = y0 + bandHalf;
       let sumR = 0, sides = 0;
       for (const sign of [1, -1]) {
         let n = 0, cx = 0, cz = 0;
@@ -235,9 +262,11 @@ function loadBodyData(sex) {
       // once per mesh, not per shape change - the skeleton-driven height of
       // e.g. "the waist" doesn't move when fat/muscle influence does, only
       // its measurement there does.
-      data.landmarks = findAllLandmarks(data.base, data.index);
+      data.scale = data.baseHeight / MALE_REFERENCE_HEIGHT;
+      data.regions = regionsForScale(data.scale);
+      data.landmarks = findAllLandmarks(data.base, data.index, data.scale);
       // fixed calibration reference - see BodyModel.jsx's blendWithMeasurements.
-      data.neutralMeasurements = measureRegions(data.base, data.index, data.landmarks);
+      data.neutralMeasurements = measureRegions(data.base, data.index, data.landmarks, data.regions);
       entry.status = "done";
       entry.data = data;
       return data;
@@ -262,6 +291,15 @@ function loadBodyData(sex) {
 // (the measurement form's "show current measurements" button).
 export function getBodyData(sex) {
   return loadBodyData(sex).promise;
+}
+
+// Fire-and-forget warm-up of the shared cache, started at app mount so the
+// ~380KB model downloads in parallel with the projection request instead of
+// after it. The error is dropped on purpose: a failed load is evicted from the
+// cache, so the real consumer (BodyModel) just loads it again and reports any
+// failure properly through its ErrorBoundary.
+export function prefetchBodyData(sex) {
+  loadBodyData(sex).promise.catch(() => {});
 }
 
 // Suspense-friendly: throws the pending/rejected promise so a <Suspense>

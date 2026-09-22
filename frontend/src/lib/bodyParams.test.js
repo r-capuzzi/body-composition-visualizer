@@ -36,6 +36,23 @@ test("leaner and more muscular points read as lower fat / higher muscle", () => 
   expect(shredded.muscle).toBeGreaterThan(soft.muscle);
 });
 
+test("the muscle morph is calibrated per sex: a median man and a median woman read alike", () => {
+  // Schutz 2002 adult medians: FFMI 18.9 men, 15.4 women. Same relative
+  // standing should mean the same morph strength on each sex's own mesh.
+  const leanFor = (target, heightCm) => target * (heightCm / 100) ** 2;
+  const man = bodyParamsFromStats({ lean_mass_kg: leanFor(18.9, 178), body_fat_pct: 20 }, 178, "male");
+  const woman = bodyParamsFromStats({ lean_mass_kg: leanFor(15.4, 165), body_fat_pct: 28 }, 165, "female");
+  expect(woman.muscle).toBeCloseTo(man.muscle, 2);
+  // and an elite natural woman (~22) saturates it; she only reached 0.63 before
+  const elite = bodyParamsFromStats({ lean_mass_kg: leanFor(22, 165), body_fat_pct: 20 }, 165, "female");
+  expect(elite.muscle).toBe(1);
+});
+
+test("sex defaults to male, so existing callers are unchanged", () => {
+  const p = { lean_mass_kg: 62, body_fat_pct: 20 };
+  expect(bodyParamsFromStats(p, 178)).toEqual(bodyParamsFromStats(p, 178, "male"));
+});
+
 test("clamps extremes to the [0, 1] ends", () => {
   const huge = bodyParamsFromStats(
     { lean_mass_kg: 120, fat_mass_kg: 2, body_fat_pct: 3 },
