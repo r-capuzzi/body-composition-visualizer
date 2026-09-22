@@ -23,12 +23,22 @@ const HEADER = 12 + 5 * 4;
 // segment midpoint sits out past the torso - needed at chest/shoulder height
 // because this mesh's A-pose has the arm stuck out sideways, so an
 // unfiltered slice there partly measures arm reach, not chest depth.
-// `mask` (optional, per vertex) keeps only triangles whose corners are all in
-// it - the torso ring, however far a big chest pushes its own sides out.
-export function sliceMeasure(pos, index, y0, maxAx = Infinity, mask = null) {
+// `part` (optional, data.part) classifies triangles by their corners: any arm
+// corner drops the triangle; all-torso always counts, however far a big
+// chest pushes its own sides past maxAx; anything touching the unclassified
+// region above the armpit falls back to the maxAx test (the muscle morph
+// moves the chest's vertices up to 5cm in y, so a live chest slice does
+// cross triangles from above the armpit).
+export const PART_ARM = 0, PART_TORSO = 1, PART_ABOVE = 2;
+export function sliceMeasure(pos, index, y0, maxAx = Infinity, part = null) {
   let perimeter = 0, maxAbsX = 0;
   for (let t = 0; t < index.length; t += 3) {
-    if (mask && !(mask[index[t]] && mask[index[t + 1]] && mask[index[t + 2]])) continue;
+    let cut = maxAx;
+    if (part) {
+      const a = part[index[t]], b = part[index[t + 1]], c = part[index[t + 2]];
+      if (a === PART_ARM || b === PART_ARM || c === PART_ARM) continue;
+      if (a === PART_TORSO && b === PART_TORSO && c === PART_TORSO) cut = Infinity;
+    }
     const ia = index[t] * 3, ib = index[t + 1] * 3, ic = index[t + 2] * 3;
     const idxs = [ia, ib, ic];
     const pts = [];
@@ -42,7 +52,7 @@ export function sliceMeasure(pos, index, y0, maxAx = Infinity, mask = null) {
     }
     if (pts.length !== 2) continue;
     const [[x1, z1], [x2, z2]] = pts;
-    if (Math.abs((x1 + x2) / 2) > maxAx) continue;
+    if (Math.abs((x1 + x2) / 2) > cut) continue;
     perimeter += Math.hypot(x2 - x1, z2 - z1);
     maxAbsX = Math.max(maxAbsX, Math.abs(x1), Math.abs(x2));
   }
@@ -161,10 +171,11 @@ export const inArmBand = (x, minAx, maxAx, sign) =>
 // show the current estimate in the form). `regions` must be the scaled set
 // for this mesh (data.regions) - the unscaled MEASURE_REGIONS only fit the
 // male mesh.
-// `torso` (data.torso) swaps the |x| cut for the torso mask on the chest,
-// waist and hip rings: a chest scaled up 25% pushes its sides past the
-// chest's 0.19 cut, and they dropped out of the measurement (118cm read 87).
-export function measureRegions(pos, index, landmarks, regions = MEASURE_REGIONS, torso = null) {
+// `part` (data.part) lets the chest, waist and hip rings count torso
+// triangles past the |x| cut: a chest scaled up 25% pushes its sides past
+// the chest's 0.19 cut, and they dropped out of the measurement (118cm
+// read 87). See sliceMeasure.
+export function measureRegions(pos, index, landmarks, regions = MEASURE_REGIONS, part = null) {
   const out = {};
   for (const key of Object.keys(regions)) {
     const { mode, maxAx, minAx = 0, bandHalf = 0.03, local } = regions[key];
@@ -191,8 +202,7 @@ export function measureRegions(pos, index, landmarks, regions = MEASURE_REGIONS,
       }
       out[key] = sides ? sumR / sides : null;
     } else {
-      const ring = torso && mode !== "width";
-      const m = sliceMeasure(pos, index, y0, ring ? Infinity : maxAx ?? Infinity, ring ? torso : null);
+      const m = sliceMeasure(pos, index, y0, maxAx ?? Infinity, mode === "width" ? null : part);
       out[key] = mode === "width" ? m.maxAbsX : m.perimeter;
     }
   }
@@ -254,7 +264,12 @@ function segmentTorso(base, adj, y0, scale) {
     if (floodBelow(adj, base, seeds, mid)[hand]) hi = mid;
     else lo = mid;
   }
-  return { armpit: lo, torso: floodBelow(adj, base, seeds, lo) };
+  const torso = floodBelow(adj, base, seeds, lo);
+  const part = new Uint8Array(torso.length);
+  for (let v = 0; v < part.length; v++) {
+    part[v] = torso[v] ? PART_TORSO : base[v * 3 + 1] >= lo ? PART_ABOVE : PART_ARM;
+  }
+  return { armpit: lo, torso, part };
 }
 
 const DELTA_SMOOTH_PASSES = 6;
@@ -390,7 +405,7 @@ function loadBodyData(sex) {
       data.landmarks = findAllLandmarks(data.base, data.index, data.scale);
       // fixed calibration reference - see BodyModel.jsx's blendWithMeasurements.
       Object.assign(data, segmentTorso(data.base, adj, data.landmarks.waist, data.scale));
-      data.neutralMeasurements = measureRegions(data.base, data.index, data.landmarks, data.regions, data.torso);
+      data.neutralMeasurements = measureRegions(data.base, data.index, data.landmarks, data.regions, data.part);
       // the head's own horizontal centre, so BodyModel can scale it about
       // itself (a head that sits forward of the body's centre line would
       // otherwise drift as the scale changes)

@@ -52,7 +52,7 @@ describe.each(["male", "female"])("%s measurement overrides", (sex) => {
   test.each(Object.keys(cases))("%s hits its target without tearing", (key) => {
     const { mesh, data } = m;
     const plain = shaped(m, {});
-    const measure = (pos) => mesh.rawToCm(key, mesh.measureRegions(pos, data.index, data.landmarks, data.regions, data.torso)[key], 1);
+    const measure = (pos) => mesh.rawToCm(key, mesh.measureRegions(pos, data.index, data.landmarks, data.regions, data.part)[key], 1);
     const before = measure(plain);
     for (const cm of cases[key]) {
       const pos = shaped(m, { [key]: cm });
@@ -61,6 +61,21 @@ describe.each(["male", "female"])("%s measurement overrides", (sex) => {
       expect(measure(pos)).toBeCloseTo((cm * before) / neutral, 0);
       const ratio = cm / neutral;
       expect(maxEdgeStretch(data.index, plain, pos)).toBeLessThan(Math.max(ratio, 1 / ratio) * 1.35);
+    }
+  });
+
+  test("a more muscular body never measures a smaller chest", () => {
+    // the muscle morph lifts chest vertices up to 5cm, so the live chest
+    // slice crosses triangles from above the armpit; counting only torso
+    // triangles there read a full-muscle man's chest as 78.6cm (neutral 94.1)
+    const { mesh, data } = m;
+    const chest = (muscle) => mesh.rawToCm("chest",
+      mesh.measureRegions(mesh.blendPositions(data, muscle, 0, 0), data.index, data.landmarks, data.regions, data.part).chest, 1);
+    let prev = chest(0);
+    for (const muscle of [0.25, 0.5, 0.75, 1]) {
+      const c = chest(muscle);
+      expect(c).toBeGreaterThanOrEqual(prev - 0.5);
+      prev = c;
     }
   });
 
