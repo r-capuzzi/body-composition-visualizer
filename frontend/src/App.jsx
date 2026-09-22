@@ -14,6 +14,7 @@ import { TRAINING_EXPERIENCE, describeTrainingFrequency } from "./lib/trainingLe
 import { BODY_TYPE_PRESETS } from "./lib/bodyTypePresets";
 import { bodyParamsFromStats, weightForFfmi } from "./lib/bodyParams";
 import { getBodyData, prefetchBodyData, blendPositions, measureRegions, rawToCm } from "./lib/bodyMesh";
+import { regionFrameScale } from "./lib/bodyShape";
 import { useProjection } from "./hooks/useProjection";
 import { usePersistentState } from "./hooks/usePersistentState";
 import ActivityPicker from "./components/ActivityPicker";
@@ -240,8 +241,10 @@ export default function App() {
       const pos = blendPositions(data, infMuscle, infHeavy, infLean);
       const raw = measureRegions(pos, data.index, data.landmarks, data.regions, data.part);
       const frameScale = Math.sqrt((shape.bmi / data.refBMI) * (shape.heightM / data.baseHeight));
+      const heightScale = shape.heightM / data.baseHeight;
 
-      const cmOf = (key) => (raw[key] == null ? null : rawToCm(key, raw[key], frameScale));
+      const cmOf = (key) =>
+        raw[key] == null ? null : rawToCm(key, raw[key], regionFrameScale(data, key, frameScale, heightScale));
       const cmVal = (key) => { const v = cmOf(key); return v == null ? "" : round1(v); };
       const inVal = (key) => { const v = cmOf(key); return v == null ? "" : round1(cmToIn(v)); };
 

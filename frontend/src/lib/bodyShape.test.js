@@ -41,6 +41,31 @@ function maxEdgeStretch(index, a, b) {
   return worst;
 }
 
+// Cohort-average obese adults, measured (Wiggermann et al. 2019, Human
+// Factors, BMI 31-87): the avatar built for the same height and weight should
+// measure like them. Body fat isn't reported; 42% / 52% is mid-range for BMI
+// ~47. A single frame scale overshot chest, hips and shoulders 10-15%.
+describe.each([
+  ["male", { h: 175.5, w: 144.8, bf: 42, chest: 134.9, waist: 139.4, hip: 133.9, shoulder: 61.4 }],
+  ["female", { h: 162.4, w: 123.0, bf: 52, chest: 130.6, waist: 128.1, hip: 142.4, shoulder: 57.1 }],
+])("the %s avatar at the obese cohort's average size", (sex, c) => {
+  let m;
+  beforeAll(async () => { m = await loadMesh(sex); }, 30000);
+
+  test("measures within 6% of the cohort on the torso", async () => {
+    const { mesh, shape, data } = m;
+    const { bodyParamsFromStats } = await import("./bodyParams");
+    const p = bodyParamsFromStats({ weight_kg: c.w, body_fat_pct: c.bf, lean_mass_kg: c.w * (1 - c.bf / 100), fat_mass_kg: (c.w * c.bf) / 100 }, c.h, sex);
+    const pos = mesh.blendPositions(data, p.muscle, Math.max(0, p.fat * 2 - 1), Math.max(0, 1 - p.fat * 2));
+    const frame = Math.sqrt((p.bmi / data.refBMI) * (p.heightM / data.baseHeight)), hs = p.heightM / data.baseHeight;
+    const raw = mesh.measureRegions(pos, data.index, data.landmarks, data.regions, data.part);
+    for (const k of ["chest", "waist", "hip", "shoulder"]) {
+      const cm = mesh.rawToCm(k, raw[k], shape.regionFrameScale(data, k, frame, hs));
+      expect(Math.abs(cm / c[k] - 1)).toBeLessThan(0.06);
+    }
+  });
+});
+
 describe.each(["male", "female"])("%s measurement overrides", (sex) => {
   let m;
   beforeAll(async () => { m = await loadMesh(sex); }, 30000);

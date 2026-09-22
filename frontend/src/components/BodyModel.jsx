@@ -97,7 +97,7 @@ export default function BodyModel({ sex = "male", shape }) {
     // changes on input or a timeline step, not every frame.
     const posAttr = mesh.geometry.attributes.position;
     const p = posAttr.array;
-    blendWithMeasurements(p, data, infMuscle, infHeavy, infLean, measurements, frameScale);
+    blendWithMeasurements(p, data, infMuscle, infHeavy, infLean, measurements, frameScale, heightScale);
     // width per vertex, so the head, hands and feet keep bony proportions
     applyFrame(p, data, frameScale, heightScale, mesh.userData.centerOffset);
     posAttr.needsUpdate = true;

@@ -337,18 +337,54 @@ const DELTA_SMOOTH_PASSES = 6;
 // the full offset and the belly still reads (per the 2026-09-15 feedback
 // that fat gain has to be visible).
 const FAT_NET_OF_DISPLACED_LEAN = 1 - 0.9 / 1.1;
-export function netHeavyOfLeanLoss(dHeavy, base, part, landmarks, armpit, scale) {
+export function netHeavyOfLeanLoss(dHeavy, abdomen) {
   const out = Float32Array.from(dHeavy);
-  const lo = landmarks.hip - 0.02 * scale, hi = armpit - 0.04 * scale, ramp = 0.1 * scale;
-  for (let v = 0; v < part.length; v++) {
-    const y = base[v * 3 + 1];
-    const abdomen = part[v] === PART_TORSO
-      ? smooth01((y - lo) / ramp) * smooth01((hi - y) / ramp)
-      : 0;
-    const k = abdomen + (1 - abdomen) * FAT_NET_OF_DISPLACED_LEAN;
+  for (let v = 0; v < abdomen.length; v++) {
+    const k = abdomen[v] + (1 - abdomen[v]) * FAT_NET_OF_DISPLACED_LEAN;
     out[v * 3] *= k; out[v * 3 + 1] *= k; out[v * 3 + 2] *= k;
   }
   return out;
+}
+
+// The abdomen, as a smooth 0..1 weight: torso between just below the hips'
+// landmark and a little under the armpit. Shared by the fat map above and by
+// the frame's width scaling (bodyShape.js widthScale), which both treat the
+// abdomen differently from the rest of the body. `band` gives the same weight
+// at any height, for a measurement landmark.
+export function abdomenBand(landmarks, armpit, scale) {
+  return { lo: landmarks.hip - 0.02 * scale, hi: armpit - 0.04 * scale, ramp: 0.1 * scale };
+}
+export const abdomenAt = ({ lo, hi, ramp }, y) => smooth01((y - lo) / ramp) * smooth01((hi - y) / ramp);
+function abdomenWeights(base, part, band) {
+  const w = new Float32Array(part.length);
+  for (let v = 0; v < part.length; v++) if (part[v] === PART_TORSO) w[v] = abdomenAt(band, base[v * 3 + 1]);
+  return w;
+}
+
+// For the frame's width, the abdomen's extra growth goes mostly forward and
+// to the sides, not out the lower back: applied all the way round, the back
+// widened at the full rate while the glutes just below took the body's
+// damped rate, and heavy bodies grew a shelf across the lower back. Same
+// front bias build-bodies.mjs gives the heavy morph: full at the belly, a
+// quarter at the back.
+function frontBiased(abdomen, base, scale) {
+  const w = new Float32Array(abdomen.length);
+  for (let v = 0; v < w.length; v++) {
+    if (!abdomen[v]) continue;
+    w[v] = abdomen[v] * (0.25 + 0.75 * smooth01((base[v * 3 + 2] + 0.04 * scale) / (0.12 * scale)));
+  }
+  return w;
+}
+
+// The mean of a per-vertex field over the torso ring at height y0 - how much
+// of the abdomen's width a waist/hip/chest tape measurement actually picks up.
+function ringMean(field, base, part, y0, scale) {
+  let s = 0, n = 0;
+  for (let v = 0; v < part.length; v++) {
+    if (part[v] !== PART_TORSO || Math.abs(base[v * 3 + 1] - y0) > 0.01 * scale) continue;
+    s += field[v]; n++;
+  }
+  return n ? s / n : 0;
 }
 const smooth01 = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 
@@ -517,7 +553,14 @@ function loadBodyData(sex) {
       Object.assign(data, segmentTorso(data.base, adj, data.landmarks.waist, data.scale));
       data.neutralMeasurements = measureRegions(data.base, data.index, data.landmarks, data.regions, data.part);
       // after capLeanByHeavy, which needs the gross fat map
-      data.dHeavy = netHeavyOfLeanLoss(data.dHeavy, data.base, data.part, data.landmarks, data.armpit, data.scale);
+      data.abdomenBand = abdomenBand(data.landmarks, data.armpit, data.scale);
+      data.abdomen = abdomenWeights(data.base, data.part, data.abdomenBand);
+      data.dHeavy = netHeavyOfLeanLoss(data.dHeavy, data.abdomen);
+      data.abdomenWidth = frontBiased(data.abdomen, data.base, data.scale);
+      data.ringAbdomen = {};
+      for (const k of ["chest", "waist", "hip"]) {
+        data.ringAbdomen[k] = ringMean(data.abdomenWidth, data.base, data.part, data.landmarks[k], data.scale);
+      }
       data.extremities = segmentExtremities(data.base, data.part, data.landmarks, data.armpit, data.baseHeight, data.scale);
       entry.status = "done";
       entry.data = data;
