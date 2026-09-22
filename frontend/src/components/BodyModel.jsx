@@ -70,6 +70,14 @@ const radialWeight = (r, scale) => {
 // a single region collapse or balloon past this - typos shouldn't wreck the mesh
 const clampRatio = (r) => Math.max(0.6, Math.min(1.6, r));
 
+// How much of the body's width factor the head takes, as an exponent: 1 is
+// the old behaviour (a 240kg head 88% wider than it should be - flattened
+// and jowly), 0 is none (a pinhead on a cone of neck). Renders at 0/0.2/
+// 0.35/0.5/1 on the 240kg body: 0.35-0.5 read naturally, and 0.5 keeps the
+// facial fat a body that heavy genuinely carries. Near normal weight
+// frameScale ~1, so ordinary bodies barely change.
+const HEAD_WIDTH_EXPONENT = 0.5;
+
 /**
  * Blend `base + Σ influence*delta` into `pos` (both flat [x,y,z,...] arrays),
  * then re-scale whichever regions have a `measurements[key]` (cm) override to
@@ -187,12 +195,6 @@ export default function BodyModel({ sex = "male", shape }) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(data.base.slice(), 3));
     g.setIndex(new THREE.BufferAttribute(data.index, 1));
-    g.morphAttributes.position = [
-      new THREE.BufferAttribute(data.dMuscle, 3), // 0
-      new THREE.BufferAttribute(data.dHeavy, 3),  // 1
-      new THREE.BufferAttribute(data.dLean, 3),   // 2
-    ];
-    g.morphTargetsRelative = true;
     g.computeVertexNormals();
     g.computeBoundingBox();
     const c = new THREE.Vector3();
@@ -203,9 +205,9 @@ export default function BodyModel({ sex = "male", shape }) {
     const m = new THREE.Mesh(g, CLAY);
     m.castShadow = true;
     m.receiveShadow = true;
-    // the measurement-override path re-derives position from data.base fresh
-    // each time (see the effect below) rather than working off the already-
-    // translated geometry, so it needs this same recentring offset to match.
+    // the effect below re-derives position from data.base fresh each time
+    // rather than working off the already-translated geometry, so it needs
+    // this same recentring offset to match.
     m.userData.centerOffset = offset;
     return m;
   }, [data]);
@@ -217,8 +219,12 @@ export default function BodyModel({ sex = "male", shape }) {
   // here; only the per-mesh geometry is ours to free.
   useEffect(() => () => mesh.geometry.dispose(), [mesh]);
 
+  // `shape` is a new object on every parent render (scrubbing re-renders ~8x a
+  // second) - key the reshape on its VALUES so an unchanged body isn't rebuilt.
+  const shapeKey = JSON.stringify(shape || {});
+
   useEffect(() => {
-    const { muscle = 0.5, fat = 0.5, bmi = data.refBMI, heightM = data.baseHeight, measurements } = shape || {};
+    const { muscle = 0.5, fat = 0.5, bmi = data.refBMI, heightM = data.baseHeight, measurements = {} } = shape || {};
     const infMuscle = clamp01(muscle);
     const infHeavy = Math.max(0, fat * 2 - 1); // heavy
     const infLean = Math.max(0, 1 - fat * 2); // lean
@@ -230,56 +236,51 @@ export default function BodyModel({ sex = "male", shape }) {
     const frameScale = Math.sqrt((bmi / data.refBMI) * (heightM / data.baseHeight));
     const heightScale = heightM / data.baseHeight;
 
-    const hasMeasurements =
-      measurements && Object.values(measurements).some((v) => v != null && v !== "");
+    // One path for every body: blend the morphs on the CPU (plus any
+    // measurement overrides - see blendWithMeasurements), then compute
+    // normals from the ACTUAL shape. This used to be GPU morph targets, which
+    // lit every morphed body with the unmorphed mesh's normals (blocky
+    // shoulders, a hard line under the belly on heavy figures); GPU-blended
+    // morph normals fixed most of that but a linear blend of normals is only
+    // approximate - on a heavy muscular build 126 vertices were off by >15deg
+    // (worst 70deg), enough to paint a bright streak across the shoulder.
+    // Exact normals cost ~3ms per shape change on desktop, and the shape only
+    // changes on input or a timeline step, not every frame.
+    const posAttr = mesh.geometry.attributes.position;
+    const p = posAttr.array;
+    blendWithMeasurements(p, data, infMuscle, infHeavy, infLean, measurements, frameScale);
 
-    if (hasMeasurements) {
-      // --- measurement-override path: blend on the CPU so per-region size
-      //     corrections can be layered on top of the muscle/fat morph before
-      //     the frame scale applies (see blendWithMeasurements' doc comment).
-      //     Recentres from data.base fresh every time, so it doesn't matter
-      //     what the position buffer held before. ---
-      mesh.morphTargetInfluences[0] = 0;
-      mesh.morphTargetInfluences[1] = 0;
-      mesh.morphTargetInfluences[2] = 0;
-      const posAttr = mesh.geometry.attributes.position;
-      blendWithMeasurements(posAttr.array, data, infMuscle, infHeavy, infLean, measurements, frameScale);
-      const off = mesh.userData.centerOffset;
-      for (let i = 0; i < posAttr.array.length; i += 3) {
-        posAttr.array[i] += off.x;
-        posAttr.array[i + 1] += off.y;
-        posAttr.array[i + 2] += off.z;
+    // Width is baked in per vertex rather than set on mesh.scale, because the
+    // head must not take the body's full width factor: that tracks mass, and
+    // a head changes far less with weight than a torso. Applied uniformly, a
+    // 240kg body (frameScale 1.88) got a head 88% wider but no taller. The
+    // head scales about its own centre by a damped factor (see
+    // HEAD_WIDTH_EXPONENT), blended in over the neck so there's no seam.
+    const off = mesh.userData.centerOffset;
+    const { from, to, cx, cz } = data.head;
+    const headScale = heightScale * Math.pow(frameScale / heightScale, HEAD_WIDTH_EXPONENT);
+    for (let i = 0; i < p.length; i += 3) {
+      const yRaw = p[i + 1];
+      const x = p[i] + off.x, z = p[i + 2] + off.z;
+      let bx = x * frameScale, bz = z * frameScale;
+      if (yRaw > from) {
+        const t = Math.min(1, (yRaw - from) / (to - from));
+        const w = t * t * (3 - 2 * t);
+        const hx = cx + off.x, hz = cz + off.z;
+        bx += w * (hx * frameScale + (x - hx) * headScale - bx);
+        bz += w * (hz * frameScale + (z - hz) * headScale - bz);
       }
-      posAttr.needsUpdate = true;
-      mesh.geometry.computeVertexNormals();
-      mesh.userData.measurementOverrideActive = true;
-    } else {
-      if (mesh.userData.measurementOverrideActive) {
-        // undo a previous render's CPU blend - GPU morphing below expects
-        // `position` to be the plain recentred base, nothing baked into it.
-        const posAttr = mesh.geometry.attributes.position;
-        posAttr.array.set(data.base);
-        const off = mesh.userData.centerOffset;
-        for (let i = 0; i < posAttr.array.length; i += 3) {
-          posAttr.array[i] += off.x;
-          posAttr.array[i + 1] += off.y;
-          posAttr.array[i + 2] += off.z;
-        }
-        posAttr.needsUpdate = true;
-        mesh.geometry.computeVertexNormals();
-        mesh.userData.measurementOverrideActive = false;
-      }
-      // --- fast path: GPU morph targets, unchanged from before this feature -
-      //     the common case (every ordinary slider drag or timeline scrub)
-      //     stays exactly as cheap as it was. ---
-      const inf = mesh.morphTargetInfluences;
-      inf[0] = infMuscle;
-      inf[1] = infHeavy;
-      inf[2] = infLean;
+      p[i] = bx;
+      p[i + 1] = yRaw + off.y;
+      p[i + 2] = bz;
     }
+    posAttr.needsUpdate = true;
+    mesh.geometry.computeVertexNormals();
+    mesh.geometry.computeBoundingSphere(); // positions now carry the size
 
-    mesh.scale.set(frameScale, heightScale, frameScale);
-  }, [mesh, data, shape]);
+    mesh.scale.set(1, heightScale, 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shapeKey stands in for shape
+  }, [mesh, data, shapeKey]);
 
   return <primitive object={mesh} />;
 }
