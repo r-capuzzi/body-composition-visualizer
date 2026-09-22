@@ -11,7 +11,10 @@ import BodyModel from "./BodyModel";
 export default function AvatarScene({ sex, shape }) {
   return (
     <div className="avatar-scene">
-      <Canvas camera={{ position: [0, 0.95, 3.4], fov: 40 }} dpr={[1, 2]} shadows>
+      {/* shadows="percentage" is PCFShadowMap. A bare `shadows` asks for
+          PCFSoftShadowMap, which three.js has removed - it warned and fell
+          back to PCF anyway, so this renders identically */}
+      <Canvas camera={{ position: [0, 0.95, 3.4], fov: 40 }} dpr={[1, 2]} shadows="percentage">
         <color attach="background" args={["#14161c"]} />
 
         <ambientLight intensity={0.75} />

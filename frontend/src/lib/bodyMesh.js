@@ -274,6 +274,36 @@ function segmentTorso(base, adj, y0, scale) {
 
 const DELTA_SMOOTH_PASSES = 6;
 
+// The heavy target is gross fat gain: +16L on the base male (the fat itself
+// going 23 -> 40% at his 67kg is ~12.7L), spread over belly 5.6L, torso
+// sides/back 2.3, arms 2.8, shoulders/upper chest 2.6, legs/hips 2.5. But the
+// fat axis is composition at CONSTANT weight (weight is the frame scale's
+// job), so that fat replaces an equal mass of lean tissue, and the muscle
+// morph can only take back 4.6L of the ~10L that has to go. Net, the mesh
+// grew 27% (female 33%) where physics says ~3.5%: a 178cm/80kg woman at 48%
+// estimated 129cm hips. In the limbs, hips and upper torso, fat really does
+// displace local muscle ~1:1 by mass (the same rule build-bodies.mjs applies
+// to the legs), and fat takes 1.1/0.9 the volume of lean, so a region's net
+// growth is only 1 - 0.9/1.1 = 18% of the fat added there. The abdomen is
+// the exception - little muscle to lose and the main fat store - so it keeps
+// the full offset and the belly still reads (per the 2026-09-15 feedback
+// that fat gain has to be visible).
+const FAT_NET_OF_DISPLACED_LEAN = 1 - 0.9 / 1.1;
+export function netHeavyOfLeanLoss(dHeavy, base, part, landmarks, armpit, scale) {
+  const out = Float32Array.from(dHeavy);
+  const lo = landmarks.hip - 0.02 * scale, hi = armpit - 0.04 * scale, ramp = 0.1 * scale;
+  for (let v = 0; v < part.length; v++) {
+    const y = base[v * 3 + 1];
+    const abdomen = part[v] === PART_TORSO
+      ? smooth01((y - lo) / ramp) * smooth01((hi - y) / ramp)
+      : 0;
+    const k = abdomen + (1 - abdomen) * FAT_NET_OF_DISPLACED_LEAN;
+    out[v * 3] *= k; out[v * 3 + 1] *= k; out[v * 3 + 2] *= k;
+  }
+  return out;
+}
+const smooth01 = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+
 // The lean target is MakeHuman's underweight body, not a lower-fat one: on
 // its own it took the male arm from 33.1 to 26.3cm and the chest from 94 to
 // 86, so at constant weight an 80kg man at 6% (the most lean mass of any
@@ -438,6 +468,8 @@ function loadBodyData(sex) {
       // fixed calibration reference - see BodyModel.jsx's blendWithMeasurements.
       Object.assign(data, segmentTorso(data.base, adj, data.landmarks.waist, data.scale));
       data.neutralMeasurements = measureRegions(data.base, data.index, data.landmarks, data.regions, data.part);
+      // after capLeanByHeavy, which needs the gross fat map
+      data.dHeavy = netHeavyOfLeanLoss(data.dHeavy, data.base, data.part, data.landmarks, data.armpit, data.scale);
       // the head's own horizontal centre, so BodyModel can scale it about
       // itself (a head that sits forward of the body's centre line would
       // otherwise drift as the scale changes)
