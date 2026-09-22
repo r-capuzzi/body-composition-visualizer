@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 
-import { bodyParamsFromStats, ffmi } from "../lib/bodyParams";
+import { bodyParamsFromStats, ffmi, ffmiReference } from "../lib/bodyParams";
 import { kgToLb } from "../lib/units";
 import ErrorBoundary from "./ErrorBoundary";
 import ProjectionChart from "./ProjectionChart";
@@ -42,7 +42,8 @@ export default function ResultsPanel({
 
   // Everything below reflects THIS moment in the plan.
   const point = result.expected[week];
-  const body = { ...bodyParamsFromStats(point, heightCm), measurements };
+  const body = { ...bodyParamsFromStats(point, heightCm, sex), measurements };
+  const ref = ffmiReference(sex);
 
   // Round BEFORE deciding. Maintenance is shown rounded, so typing that exact
   // number in lands a fraction of a kcal off (-0.2), which used to read as
@@ -129,8 +130,9 @@ export default function ResultsPanel({
         />
       </div>
       <p className="muted" style={{ fontSize: "0.8rem", margin: "0.4rem 0 1.25rem" }}>
-        FFMI is muscularity adjusted for your height — roughly 19 average, 22
-        well-trained, 25 near the natural limit.
+        FFMI is muscularity adjusted for your height. For{" "}
+        {sex === "female" ? "women" : "men"}: roughly {ref.average} average,{" "}
+        {ref.trained} well-trained, {ref.elite}+ elite.
       </p>
 
       {(warnings.length > 0 || notes.length > 0) && (

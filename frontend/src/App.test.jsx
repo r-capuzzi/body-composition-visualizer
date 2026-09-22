@@ -36,10 +36,14 @@ const READY = {
 
 // Only getBodyData is swapped (so a test can make the model load fail); the
 // rest of the mesh maths stays real.
-const { getBodyDataMock } = vi.hoisted(() => ({ getBodyDataMock: vi.fn() }));
+const { getBodyDataMock, prefetchBodyDataMock } = vi.hoisted(() => ({
+  getBodyDataMock: vi.fn(),
+  prefetchBodyDataMock: vi.fn(),
+}));
 vi.mock("./lib/bodyMesh", async (importOriginal) => ({
   ...(await importOriginal()),
   getBodyData: getBodyDataMock,
+  prefetchBodyData: prefetchBodyDataMock,
 }));
 
 // The form persists to localStorage; start each test from a clean slate so
@@ -158,6 +162,17 @@ test("a measurement still being typed doesn't reshape the avatar", async () => {
   vi.doUnmock("./components/ResultsPanel");
 });
 
+test("the body model starts downloading at mount, not after the projection", async () => {
+  // LOADING: no result yet - the model must already be on its way.
+  const user = userEvent.setup();
+  render(<App />);
+  expect(prefetchBodyDataMock).toHaveBeenCalledWith("male");
+
+  // and switching sex warms the other model
+  await user.selectOptions(screen.getByLabelText(/^sex$/i), "female");
+  expect(prefetchBodyDataMock).toHaveBeenLastCalledWith("female");
+});
+
 test("'show current measurements' before any result asks the user to wait", async () => {
   const user = userEvent.setup();
   render(<App />);
@@ -194,6 +209,20 @@ test("a slow first load explains the sleeping server instead of an endless 'Calc
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("the Muscular preset targets a female FFMI for women, not the male one", async () => {
+  // Female, 165cm, preset 21% bf, target FFMI 20.5:
+  // lean = 20.5 * 1.65^2 = 55.81kg -> weight = 55.81 / 0.79 = 70.6kg.
+  // It used to target FFMI 24 -> 82.7kg, i.e. 65kg lean: more than the app's default man.
+  const user = userEvent.setup();
+  render(<App />);
+  await user.selectOptions(screen.getByLabelText(/^sex$/i), "female");
+  const height = screen.getByLabelText("Height (cm)");
+  await user.clear(height);
+  await user.type(height, "165");
+  await user.selectOptions(screen.getByLabelText(/jump to a body type/i), "muscular");
+  expect(screen.getByLabelText("Weight (kg)")).toHaveValue(70.6);
 });
 
 test("body-type presets are sex-specific", async () => {

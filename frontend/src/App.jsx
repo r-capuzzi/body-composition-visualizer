@@ -13,7 +13,7 @@ import {
 import { TRAINING_EXPERIENCE, describeTrainingFrequency } from "./lib/trainingLevels";
 import { BODY_TYPE_PRESETS } from "./lib/bodyTypePresets";
 import { bodyParamsFromStats, weightForFfmi } from "./lib/bodyParams";
-import { getBodyData, blendPositions, measureRegions, rawToCm } from "./lib/bodyMesh";
+import { getBodyData, prefetchBodyData, blendPositions, measureRegions, rawToCm } from "./lib/bodyMesh";
 import { useProjection } from "./hooks/useProjection";
 import { usePersistentState } from "./hooks/usePersistentState";
 import ActivityPicker from "./components/ActivityPicker";
@@ -151,7 +151,7 @@ export default function App() {
           units === "metric"
             ? Number(f.height_cm)
             : feetInchesToCm(Number(f.height_ft), Number(f.height_in));
-        const weightKg = weightForFfmi(preset.targetFfmi, bodyFatPct, heightCm);
+        const weightKg = weightForFfmi(preset.targetFfmi[f.sex], bodyFatPct, heightCm);
         if (units === "metric") next.weight_kg = round1(weightKg);
         else next.weight_lb = round1(kgToLb(weightKg));
       }
@@ -231,14 +231,14 @@ export default function App() {
         body_fat_pct: payload.body_fat_pct,
         lean_mass_kg: payload.weight_kg * (1 - payload.body_fat_pct / 100),
       };
-      const shape = bodyParamsFromStats(point, payload.height_cm);
+      const shape = bodyParamsFromStats(point, payload.height_cm, payload.sex);
       const data = await getBodyData(payload.sex === "female" ? "female" : "male");
 
       const infMuscle = shape.muscle;
       const infHeavy = Math.max(0, shape.fat * 2 - 1);
       const infLean = Math.max(0, 1 - shape.fat * 2);
       const pos = blendPositions(data, infMuscle, infHeavy, infLean);
-      const raw = measureRegions(pos, data.index, data.landmarks);
+      const raw = measureRegions(pos, data.index, data.landmarks, data.regions);
       const frameScale = Math.sqrt((shape.bmi / data.refBMI) * (shape.heightM / data.baseHeight));
 
       const cmOf = (key) => (raw[key] == null ? null : rawToCm(key, raw[key], frameScale));
@@ -280,6 +280,19 @@ export default function App() {
   // a first-time visitor just watches "Calculating…" and reasonably concludes
   // the app is broken. Only the very first load can hit it - once a result
   // exists, useProjection keeps showing it while later requests run.
+  // Start the avatar's downloads now, in parallel with the projection. None of
+  // them depend on the result, but they were requested as a chain behind it -
+  // API reply -> ResultsPanel chunk -> AvatarScene chunk -> 3D setup -> model
+  // fetch - measured on the live site as the model starting ~2s after the
+  // reply, and on a cold backend (~21s) the network sat idle the whole wait.
+  // The lazy() calls later resolve these same, already-loaded modules.
+  const avatarSex = form.sex === "female" ? "female" : "male";
+  useEffect(() => {
+    import("./components/ResultsPanel");
+    import("./components/AvatarScene");
+    prefetchBodyData(avatarSex);
+  }, [avatarSex]);
+
   const waitingForFirstResult = status === "loading" && !result;
   const [slowFirstLoad, setSlowFirstLoad] = useState(false);
   useEffect(() => {

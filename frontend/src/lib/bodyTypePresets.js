@@ -12,7 +12,8 @@ export const BODY_TYPE_PRESETS = [
     value: "muscular",
     label: "Muscular / athletic",
     bodyFatPct: { male: 16, female: 21 },
-    targetFfmi: 24,
+    // sex-specific, like body fat - see FFMI_REFERENCE in bodyParams.js
+    targetFfmi: { male: 24, female: 20.5 },
   },
   {
     value: "lean",

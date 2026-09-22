@@ -34,6 +34,22 @@ describe("loadBodyData error handling", () => {
     await expect(getBodyData("male")).rejects.toThrow(/truncated or corrupt/);
   });
 
+  test("a failed prefetch is silent and doesn't poison the real load", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, arrayBuffer: async () => new ArrayBuffer(0) })
+      .mockResolvedValue({ ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.resetModules();
+    const { prefetchBodyData, getBodyData } = await import("./bodyMesh");
+
+    prefetchBodyData("male");                      // must not throw or leave an unhandled rejection
+    await new Promise((r) => setTimeout(r, 0));
+    // the real consumer loads again (fresh fetch) and gets ITS error, not a stale one
+    await expect(getBodyData("male")).rejects.toThrow(/HTTP 404/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   test("a failed load is not cached forever - a later call refetches", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: false,
