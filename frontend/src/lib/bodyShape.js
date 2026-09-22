@@ -124,7 +124,7 @@ const clampRatio = (r) => Math.max(0.6, Math.min(1.6, r));
  * each region's correction has to know the blended-but-not-yet-measurement-
  * adjusted size first - something a shader can't feed back into itself.
  */
-export function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurements, frameScale) {
+export function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurements, frameScale, heightScale = 1) {
   const { base, dMuscle, dHeavy, dLean, landmarks, neutralMeasurements, regions, scale } = data;
   for (let j = 0; j < base.length; j++) {
     pos[j] = base[j] + infMuscle * dMuscle[j] + infHeavy * dHeavy[j] + infLean * dLean[j];
@@ -146,7 +146,7 @@ export function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, m
     const { maxAx, minAx = 0, bandHalf, local } = region;
     const y0 = landmarks[key];
     if (neutralMeasurements[key] == null) continue; // no vertices at this landmark
-    const neutralReal = neutralMeasurements[key] * frameScale;
+    const neutralReal = neutralMeasurements[key] * regionFrameScale(data, key, frameScale, heightScale);
     if (neutralReal < 0.01) continue; // guard a degenerate slice
 
     let centres;
@@ -233,6 +233,27 @@ export function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, m
 const EXTREMITY_WIDTH_EXPONENT = 0.5;
 const EXT_GROUPS = 6; // 0 = body, then EXT_HEAD..EXT_FOOT_L from bodyMesh
 
+// Weight widens the abdomen faster than the rest of the body. A single frame
+// scale (width ~ sqrt(mass/height)) put the cohort-average obese man
+// (Wiggermann et al. 2019: 175.5cm, 144.8kg, BMI 47) at the right waist
+// (138 vs 139cm) but chest 154 vs 135, hips 148 vs 134, shoulders +15%; the
+// cohort woman the same (waist +4%, chest/hips/shoulders +10%). His mesh also
+// held ~166L where 144.8kg at ~42% fat is ~144L. Fitting the non-abdominal
+// width to the cohort's chest, hips and shoulders gives an exponent of
+// 0.62-0.79 on the frame (mean 0.72); the abdomen keeps 1. Still weight and
+// height only - composition never sets size - and at the base mesh's own
+// BMI every factor is 1, so ordinary bodies are unchanged.
+const BODY_WIDTH_EXPONENT = 0.72;
+export const widthScale = (frameScale, heightScale, abdomen) =>
+  heightScale * Math.pow(frameScale / heightScale, BODY_WIDTH_EXPONENT + (1 - BODY_WIDTH_EXPONENT) * abdomen);
+
+// The width factor at a measurement region's landmark, for turning a raw
+// mesh measurement into real cm (and back) - the arm and shoulder are never
+// abdomen, the torso rings take their ring's mean abdomen width weight.
+export function regionFrameScale(data, key, frameScale, heightScale) {
+  return widthScale(frameScale, heightScale, data.ringAbdomen[key] ?? 0);
+}
+
 /**
  * Bake the frame's width scale into `p` (the blended body, mesh units, before
  * recentring by `off`), and recentre it; height is left to mesh.scale.y.
@@ -261,14 +282,20 @@ export function applyFrame(p, data, frameScale, heightScale, off) {
   }
   for (let g = 1; g < EXT_GROUPS; g++) if (cn[g]) { cx[g] = cx[g] / cn[g] + off.x; cz[g] = cz[g] / cn[g] + off.z; }
   const extScale = heightScale * Math.pow(frameScale / heightScale, EXTREMITY_WIDTH_EXPONENT);
+  // the body's width factor away from the abdomen (the neck, wrists and
+  // ankles are all out there, so the joints take it too) - see widthScale
+  const bodyScale = widthScale(frameScale, heightScale, 0);
+  const abdomen = data.abdomenWidth;
   for (let i = 0; i < p.length; i += 3) {
     const yRaw = p[i + 1];
     const x = p[i] + off.x, z = p[i + 2] + off.z;
-    let bx = x * frameScale, bz = z * frameScale;
+    const a = abdomen[i / 3];
+    const s = a > 0 ? widthScale(frameScale, heightScale, a) : bodyScale;
+    let bx = x * s, bz = z * s;
     const g = group[i / 3], w = weight[i / 3];
     if (g && w > 0 && cn[g]) {
-      bx += w * (cx[g] * frameScale + (x - cx[g]) * extScale - bx);
-      bz += w * (cz[g] * frameScale + (z - cz[g]) * extScale - bz);
+      bx += w * (cx[g] * bodyScale + (x - cx[g]) * extScale - bx);
+      bz += w * (cz[g] * bodyScale + (z - cz[g]) * extScale - bz);
     }
     p[i] = bx;
     p[i + 1] = yRaw + off.y;
