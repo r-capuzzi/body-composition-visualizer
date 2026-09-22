@@ -235,6 +235,34 @@ def test_fat_below_the_essential_floor_is_never_raised_in_a_deficit():
     assert fat <= 1e-9   # no fat gain in a deficit, full stop
 
 
+def test_fat_mass_does_not_raise_the_muscle_gain_ceiling():
+    """Regression: the ceiling was a % of TOTAL bodyweight, so an untrained
+    160kg/50% man got more than twice the headroom of a 75kg/15% man."""
+    from calculations import weekly_muscle_gain_cap_kg
+
+    lean_75 = weekly_muscle_gain_cap_kg(Sex.male, 75.0, TrainingExperience.untrained, 63.75)
+    heavy = weekly_muscle_gain_cap_kg(Sex.male, 160.0, TrainingExperience.untrained, 80.0)
+    assert heavy < 1.3 * lean_75            # was 2.1x
+    # at or below neutral body fat nothing changes (the under-promise rule
+    # only allows this correction to lower a ceiling, never raise one)
+    for w, lean in ((75.0, 63.75), (75.0, 67.5)):
+        assert weekly_muscle_gain_cap_kg(Sex.male, w, TrainingExperience.untrained, lean) == \
+            weekly_muscle_gain_cap_kg(Sex.male, w, TrainingExperience.untrained)
+
+
+def test_weekly_change_uses_the_lean_based_ceiling():
+    """End to end through weekly_body_comp_change, so the ceiling fix can't be
+    silently disconnected at the call site."""
+    common = dict(energy_balance_kcal_week=3000.0, sex=Sex.male,
+                  training_experience=TrainingExperience.untrained,
+                  training_frequency_per_week=3, protein_g_per_kg=1.8, age_years=30)
+    lean_gain_lean_man, _ = weekly_body_comp_change(
+        weight_kg=75.0, body_fat_pct=15.0, lean_mass_kg=63.75, fat_mass_kg=11.25, **common)
+    lean_gain_heavy_man, _ = weekly_body_comp_change(
+        weight_kg=160.0, body_fat_pct=50.0, lean_mass_kg=80.0, fat_mass_kg=80.0, **common)
+    assert lean_gain_heavy_man < 1.3 * lean_gain_lean_man   # was ~2.1x
+
+
 def test_more_training_frequency_preserves_more_muscle_in_a_deficit():
     leans = [
         weekly_body_comp_change(
