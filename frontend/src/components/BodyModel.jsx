@@ -3,7 +3,7 @@ import * as THREE from "three";
 
 import { clamp01 } from "../lib/bodyParams";
 import { useBodySuspense } from "../lib/bodyMesh";
-import { applyFrame, blendWithMeasurements } from "../lib/bodyShape";
+import { applyFrame, blendWithMeasurements, calibrationBasis } from "../lib/bodyShape";
 
 const CLAY = new THREE.MeshStandardMaterial({
   color: "#c78a66",
@@ -72,6 +72,18 @@ export default function BodyModel({ sex = "male", shape }) {
   // second) - key the reshape on its VALUES so an unchanged body isn't rebuilt.
   const shapeKey = JSON.stringify(shape || {});
 
+  // Typed measurements describe the body the user entered - the projection's
+  // START, passed as `shape.calibrateTo` - so they're calibrated against the
+  // model's estimate for that body, once, and carried through every week (see
+  // blendWithMeasurements). Without one (a single body), this body itself.
+  const hasMeasurements = Object.values(shape?.measurements || {}).some((v) => v != null);
+  const calibrateKey = hasMeasurements ? JSON.stringify(shape?.calibrateTo || null) : "";
+  const basis = useMemo(
+    () => (hasMeasurements && shape?.calibrateTo ? calibrationBasis(data, shape.calibrateTo) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- calibrateKey stands in for shape.calibrateTo
+    [data, calibrateKey]
+  );
+
   useEffect(() => {
     const { muscle = 0.5, fat = 0.5, bmi = data.refBMI, heightM = data.baseHeight, measurements = {} } = shape || {};
     const infMuscle = clamp01(muscle);
@@ -97,7 +109,7 @@ export default function BodyModel({ sex = "male", shape }) {
     // changes on input or a timeline step, not every frame.
     const posAttr = mesh.geometry.attributes.position;
     const p = posAttr.array;
-    blendWithMeasurements(p, data, infMuscle, infHeavy, infLean, measurements, frameScale, heightScale);
+    blendWithMeasurements(p, data, infMuscle, infHeavy, infLean, measurements, frameScale, heightScale, basis);
     // width per vertex, so the head, hands and feet keep bony proportions
     applyFrame(p, data, frameScale, heightScale, mesh.userData.centerOffset);
     posAttr.needsUpdate = true;
@@ -106,7 +118,7 @@ export default function BodyModel({ sex = "male", shape }) {
 
     mesh.scale.set(1, heightScale, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shapeKey stands in for shape
-  }, [mesh, data, shapeKey]);
+  }, [mesh, data, shapeKey, basis]);
 
   return <primitive object={mesh} />;
 }

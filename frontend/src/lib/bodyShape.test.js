@@ -105,11 +105,53 @@ describe.each(["male", "female"])("%s measurement overrides", (sex) => {
     const before = measure(plain);
     for (const cm of cases[key]) {
       const pos = shaped(m, { [key]: cm });
-      // calibrated against the neutral mesh, so it lands on target x (live / neutral)
-      const neutral = mesh.rawToCm(key, data.neutralMeasurements[key], 1);
-      expect(measure(pos)).toBeCloseTo((cm * before) / neutral, 0);
-      const ratio = cm / neutral;
+      // calibrated against this body itself, so it renders what was typed
+      expect(Math.abs(measure(pos) - cm)).toBeLessThan(1);
+      const ratio = cm / before;
       expect(maxEdgeStretch(data.index, plain, pos)).toBeLessThan(Math.max(ratio, 1 / ratio) * 1.35);
+    }
+  });
+
+  test("typing back the model's own estimate changes nothing", () => {
+    // "Show current measurements" fills the form with the estimate; leaving
+    // those numbers in used to reshape the body (they were calibrated against
+    // the neutral mesh, not this one)
+    const { mesh, data } = m;
+    const plain = shaped(m, {});
+    const raw = mesh.measureRegions(plain, data.index, data.landmarks, data.regions, data.part);
+    const echoed = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, mesh.rawToCm(k, v, 1)]));
+    const pos = shaped(m, echoed);
+    let worst = 0;
+    for (let i = 0; i < pos.length; i++) worst = Math.max(worst, Math.abs(pos[i] - plain[i]));
+    expect(worst).toBeLessThan(1e-4); // metres
+  });
+
+  test("measurements typed at the start carry through a projection", async () => {
+    // real backend cut, 110kg/32% -> 88.1kg/17.9%; with the neutral-mesh
+    // basis a typed 110cm waist rendered 128 at the start and an overridden
+    // chest held ~128cm through the whole 22kg loss
+    if (sex !== "male") return;
+    const { mesh, shape, data } = m;
+    const { bodyParamsFromStats } = await import("./bodyParams");
+    const start = { weight_kg: 110, body_fat_pct: 32, lean_mass_kg: 74.8, fat_mass_kg: 35.2 };
+    const end = { weight_kg: 88.1, body_fat_pct: 17.9, lean_mass_kg: 72.3, fat_mass_kg: 15.8 };
+    const typed = { waist: 110, chest: 118 };
+    const s0 = bodyParamsFromStats(start, 178, "male", start);
+    const basis = shape.calibrationBasis(data, s0);
+    const cmAt = (pt, measurements) => {
+      const p = bodyParamsFromStats(pt, 178, "male", start);
+      const { infMuscle, infHeavy, infLean } = shape.influences(p);
+      const { frameScale, heightScale } = shape.frameScales(data, p);
+      const pos = new Float32Array(data.base.length);
+      shape.blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurements, frameScale, heightScale, basis);
+      const r = mesh.measureRegions(pos, data.index, data.landmarks, data.regions, data.part);
+      return Object.fromEntries(["waist", "chest"].map((k) => [k, mesh.rawToCm(k, r[k], shape.regionFrameScale(data, k, frameScale, heightScale))]));
+    };
+    const startCm = cmAt(start, typed), plainStart = cmAt(start, {}), plainEnd = cmAt(end, {}), endCm = cmAt(end, typed);
+    for (const k of ["waist", "chest"]) {
+      expect(Math.abs(startCm[k] - typed[k])).toBeLessThan(1);                     // what was typed, at the start
+      expect(endCm[k] / typed[k]).toBeCloseTo(plainEnd[k] / plainStart[k], 1);     // then the model's own change
+      expect(endCm[k]).toBeLessThan(typed[k] - 5);                                   // i.e. it shrinks with the cut
     }
   });
 

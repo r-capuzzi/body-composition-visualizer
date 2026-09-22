@@ -3,7 +3,7 @@
 // it. Pure functions on flat position arrays - kept out of the component so
 // it can be tested against the real meshes without a WebGL context.
 
-import { inArmBand, cmToRawTarget, sliceMeasure } from "./bodyMesh";
+import { inArmBand, cmToRawTarget, sliceMeasure, measureRegions, blendPositions } from "./bodyMesh";
 
 // Each region's ratio (see blendWithMeasurements) used to be computed against
 // the CURRENTLY MORPHED size, live, every render - a measurement "calibrated"
@@ -15,15 +15,13 @@ import { inArmBand, cmToRawTarget, sliceMeasure } from "./bodyMesh";
 // overridden) hip keeps growing freely next to it - a wasp-waist pinch that
 // gets worse the further the slider moves. A real tape measurement describes
 // one person at one moment, not an invariant that holds at every body fat %.
-// Fix (see `data.neutralMeasurements`, computed once per mesh in
-// lib/bodyMesh.js): measure the ratio against this fixed, morph-independent
-// baseline (the UNMORPHED base mesh) instead of the live shape. The ratio
-// this produces is then a personal CALIBRATION CONSTANT - "this person's
-// waist runs 8% bigger than the generic estimate" - which stays valid at
-// every fat/muscle/weight combination and gets applied on top of whatever
-// the live auto-estimate naturally does, so the region still grows and
-// shrinks with the sliders, just consistently offset by how this real body
-// actually differs.
+// The ratio is now a personal CALIBRATION CONSTANT - "this person's waist
+// runs 8% bigger than the generic estimate" - measured once against a fixed
+// basis and applied on top of whatever the live estimate does, so the region
+// still grows and shrinks along a projection, consistently offset by how this
+// real body differs. The basis was first the unmorphed base mesh, which
+// fixed the pinch but never rendered what was typed; it's now the model's
+// estimate for the body the user described (see blendWithMeasurements).
 // Raised-cosine half-width around each landmark: 1 at the landmark, smoothly
 // down to 0 at +-SPREAD, no flat plateau at all - so nearby geometry always
 // moves at least a little in sympathy instead of only the touched region
@@ -73,9 +71,13 @@ const radialWeight = (r, scale) => {
 // a triangle and not the other: a bigger chest grew a breastplate with a
 // seam down each side. Fade out over MAX_AX_FADE past maxAx instead - full
 // strength inside maxAx, so the measured slice (which stops at maxAx) still
-// hits its target. 0.03 fits the gap at chest height between the torso's
-// edge (0.165) and the arm's inner edge (0.222).
-const MAX_AX_FADE = 0.03;
+// hits its target. It was 0.03, just the gap at chest height between the
+// torso's edge (0.165) and the arm's inner edge (0.222), but a SMALLER chest
+// then pulled the torso side in ~2cm while the arm stayed put, and that gap
+// stretched the armpit's edges 1.6x inside the 3cm band. 0.07 reaches the
+// arm's inner edge at a low weight, so it moves a little with the chest
+// (continuously), and the worst stretch drops to ~1.3x.
+const MAX_AX_FADE = 0.07;
 const edgeFade = (ax, maxAx, scale) => {
   const d = ax - maxAx, band = MAX_AX_FADE * scale;
   if (d <= 0) return 1;
@@ -112,6 +114,37 @@ function shoulderWeight(data, i) {
   return ramp * smooth01(1 - below / (SHOULDER_FLANK * scale));
 }
 
+// The morph influences for a body-params shape ({muscle, fat}) - the same
+// split BodyModel renders with.
+export const influences = ({ muscle = 0.5, fat = 0.5 } = {}) => ({
+  infMuscle: Math.max(0, Math.min(1, muscle)),
+  infHeavy: Math.max(0, fat * 2 - 1),
+  infLean: Math.max(0, 1 - fat * 2),
+});
+export const frameScales = (data, { bmi = data.refBMI, heightM = data.baseHeight } = {}) => ({
+  frameScale: Math.sqrt((bmi / data.refBMI) * (heightM / data.baseHeight)),
+  heightScale: heightM / data.baseHeight,
+});
+
+// Every region's model estimate in real metres (raw x its width factor) for
+// blended positions `pos` - what a tape measurement is calibrated against.
+function estimateReal(data, pos, frameScale, heightScale) {
+  const raw = measureRegions(pos, data.index, data.landmarks, data.regions, data.part);
+  const out = {};
+  for (const k of Object.keys(raw)) {
+    out[k] = raw[k] == null ? null : raw[k] * regionFrameScale(data, k, frameScale, heightScale);
+  }
+  return out;
+}
+
+// The calibration basis for a described body (the projection's start):
+// see blendWithMeasurements.
+export function calibrationBasis(data, shape) {
+  const { infMuscle, infHeavy, infLean } = influences(shape);
+  const { frameScale, heightScale } = frameScales(data, shape);
+  return estimateReal(data, blendPositions(data, infMuscle, infHeavy, infLean), frameScale, heightScale);
+}
+
 // however far off a bad measurement would otherwise push the ratio, don't let
 // a single region collapse or balloon past this - typos shouldn't wreck the mesh
 const clampRatio = (r) => Math.max(0.6, Math.min(1.6, r));
@@ -124,19 +157,29 @@ const clampRatio = (r) => Math.max(0.6, Math.min(1.6, r));
  * each region's correction has to know the blended-but-not-yet-measurement-
  * adjusted size first - something a shader can't feed back into itself.
  */
-export function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurements, frameScale, heightScale = 1) {
-  const { base, dMuscle, dHeavy, dLean, landmarks, neutralMeasurements, regions, scale } = data;
+export function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurements, frameScale, heightScale = 1, basis = null) {
+  const { base, dMuscle, dHeavy, dLean, landmarks, regions, scale } = data;
   for (let j = 0; j < base.length; j++) {
     pos[j] = base[j] + infMuscle * dMuscle[j] + infHeavy * dHeavy[j] + infLean * dLean[j];
   }
+  // no basis given: the typed numbers describe this very body
+  if (!basis) basis = estimateReal(data, pos, frameScale, heightScale);
 
-  // 1) the ratio for each measured region is calibrated against the FIXED
-  //    neutral baseline (see computeNeutralMeasurements), not the live blend
-  //    - that's what keeps it from fighting the body-fat slider. `local`
-  //    regions (the arm) still need their per-side CENTRE from the live,
-  //    current blend though: that's just "where is the arm right now", which
-  //    genuinely does shift a little as muscle/fat change, and scaling around
-  //    a stale centre would offset the arm sideways instead of thickening it.
+  // 1) the ratio for each measured region is calibrated against `basis` - the
+  //    model's estimate for the body the user DESCRIBED (the projection's
+  //    start), not the live blend and not the neutral mesh. The neutral mesh
+  //    was the previous basis, and it broke both ends: at 110kg/32% a typed
+  //    110cm waist rendered 128 (the heavy morph's growth stacked on a ratio
+  //    already fitted to the unmorphed mesh), echoing back the "current
+  //    measurements" estimate reshaped the body, and the ratio divided out
+  //    this week's frame, so an overridden chest held 128cm through a 22kg
+  //    cut. Against the start, what was typed renders at the start, and later
+  //    weeks carry the same personal offset on the model's own change.
+  //    `local` regions (the arm) still need their per-side CENTRE from the
+  //    live, current blend though: that's just "where is the arm right now",
+  //    which genuinely does shift a little as muscle/fat change, and scaling
+  //    around a stale centre would offset the arm sideways instead of
+  //    thickening it.
   const ratios = [];
   let shoulderShift = 0;
   for (const key of Object.keys(regions)) {
@@ -145,9 +188,8 @@ export function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, m
     const region = regions[key];
     const { maxAx, minAx = 0, bandHalf, local } = region;
     const y0 = landmarks[key];
-    if (neutralMeasurements[key] == null) continue; // no vertices at this landmark
-    const neutralReal = neutralMeasurements[key] * regionFrameScale(data, key, frameScale, heightScale);
-    if (neutralReal < 0.01) continue; // guard a degenerate slice
+    const basisReal = basis[key];
+    if (basisReal == null || basisReal < 0.01) continue; // no vertices at this landmark / degenerate slice
 
     let centres;
     if (local) {
@@ -172,7 +214,7 @@ export function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, m
     if (region.mode === "width") {
       // same calibration as every other region, applied to the live width
       const live = sliceMeasure(pos, data.index, y0).maxAbsX;
-      shoulderShift = (clampRatio(target / neutralReal) - 1) * live;
+      shoulderShift = (clampRatio(target / basisReal) - 1) * live;
       continue;
     }
     const spread = [REGION_SPREAD[key]].flat();
@@ -180,7 +222,7 @@ export function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, m
     // a torso-only region can only tell torso from arm below the armpit (see
     // segmentTorso), so its taper must be finished by then
     if (region.torsoOnly) above = Math.min(above, data.armpit - y0);
-    ratios.push({ region, y0, spread: [spread[0] * scale, above], ratio: clampRatio(target / neutralReal), centres });
+    ratios.push({ region, y0, spread: [spread[0] * scale, above], ratio: clampRatio(target / basisReal), centres });
   }
   if (ratios.length === 0 && shoulderShift === 0) return;
 
