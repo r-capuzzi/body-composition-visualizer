@@ -54,6 +54,32 @@ export function ffmi(leanMassKg, heightCm) {
 }
 
 /**
+ * FFMI with the lean mass that simply comes with carrying more fat taken
+ * out - what the muscle MORPH should see. Lean mass rises with fat mass
+ * without any training (bigger skeleton, organs, water, the muscle it takes
+ * to carry the weight): Forbes's curve, FFM = 10.4 ln(FM) + 14.2 kg (Forbes
+ * 1987, as restated in Hall 2007, Br J Nutr 97:1059). Raw FFMI put a 145kg
+ * man at 42% (FFMI 26.5) past an 85kg lifter at 10% (24.1), so every obese
+ * body got the full bodybuilder morph. Past each sex's reference fat mass,
+ * the 10.4 ln(FM / FM_ref) kg Forbes attributes to the extra fat is taken
+ * off first. FM_ref is the app's own neutral point - median FFMI at the
+ * neutral body fat (FFMI_REFERENCE.average, FAT_REFERENCE midpoint), FMI
+ * 5.65 men / 6.92 women. One-sided on purpose: below it the curve would
+ * credit a lean body with muscle it hasn't built.
+ * The FFMI card still shows the real FFMI; this only feeds the morph.
+ */
+const FORBES_FFM_PER_LN_FM = 10.4;
+export function morphFfmi(leanMassKg, fatMassKg, heightCm, sex = "male") {
+  const h2 = (heightCm / 100) ** 2;
+  const { average } = ffmiReference(sex);
+  const { morphZero, morphFull } = fatReference(sex);
+  const neutralFat = (morphZero + morphFull) / 2 / 100;
+  const fmRef = ((average * neutralFat) / (1 - neutralFat)) * h2;
+  const excess = fatMassKg > fmRef ? FORBES_FFM_PER_LN_FM * Math.log(fatMassKg / fmRef) : 0;
+  return (leanMassKg - excess) / h2;
+}
+
+/**
  * Inverse of ffmi(): the bodyweight (kg) that produces a given FFMI at a given
  * body-fat % and height. Used to anchor a body-type preset's weight so the
  * derived `muscle` score in bodyParamsFromStats actually reaches the target,
@@ -81,9 +107,13 @@ export function bodyParamsFromStats(point, heightCm, sex = "male") {
   const fat = clamp01((point.body_fat_pct - fatRef.morphZero) / (fatRef.morphFull - fatRef.morphZero));
 
   // muscle: FFMI from a little below this sex's untrained level (-> 0) up to
-  // near its natural ceiling (-> 1)
+  // near its natural ceiling (-> 1), net of fat-driven lean (see morphFfmi)
   const { morphZero, morphFull } = ffmiReference(sex);
-  const muscle = clamp01((ffmi(point.lean_mass_kg, heightCm) - morphZero) / (morphFull - morphZero));
+  const fatMassKg = point.fat_mass_kg ?? point.weight_kg * (point.body_fat_pct / 100);
+  const m = Number.isFinite(fatMassKg)
+    ? morphFfmi(point.lean_mass_kg, fatMassKg, heightCm, sex)
+    : ffmi(point.lean_mass_kg, heightCm);
+  const muscle = clamp01((m - morphZero) / (morphFull - morphZero));
 
   // size: BMI, used by BodyModel to scale the mesh to the person's real mass
   // so composition changes don't change overall size.

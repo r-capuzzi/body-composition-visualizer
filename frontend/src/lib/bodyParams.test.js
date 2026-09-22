@@ -58,6 +58,19 @@ test("the fat morph is calibrated per sex: the same ACE category reads alike", (
   expect(bodyParamsFromStats({ lean_mass_kg: 50, body_fat_pct: 14 }, 165, "female").fat).toBe(0);
 });
 
+test("lean mass that comes with carrying fat isn't read as muscularity", () => {
+  const at = (sex, h, w, bf) =>
+    bodyParamsFromStats({ weight_kg: w, body_fat_pct: bf, lean_mass_kg: w * (1 - bf / 100), fat_mass_kg: (w * bf) / 100 }, h, sex).muscle;
+  // raw FFMI: 145kg/42% man 26.5 vs 85kg/10% lifter 24.1 - both got muscle 1
+  expect(at("male", 178, 145, 42)).toBeLessThan(0.85);
+  expect(at("male", 178, 145, 42)).toBeLessThan(at("male", 178, 85, 10));
+  // a 120kg woman at 52% reads as average muscle, not maxed
+  expect(at("female", 165, 120, 52)).toBeCloseTo(0.5, 1);
+  // at or below the neutral fat mass nothing changes (one-sided)
+  const lean = 80 * 0.8, h2 = 1.78 ** 2;
+  expect(at("male", 178, 80, 20)).toBeCloseTo((lean / h2 - 16) / 8, 5);
+});
+
 test("sex defaults to male, so existing callers are unchanged", () => {
   const p = { lean_mass_kg: 62, body_fat_pct: 20 };
   expect(bodyParamsFromStats(p, 178)).toEqual(bodyParamsFromStats(p, 178, "male"));
