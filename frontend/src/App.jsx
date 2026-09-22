@@ -238,7 +238,7 @@ export default function App() {
       const infHeavy = Math.max(0, shape.fat * 2 - 1);
       const infLean = Math.max(0, 1 - shape.fat * 2);
       const pos = blendPositions(data, infMuscle, infHeavy, infLean);
-      const raw = measureRegions(pos, data.index, data.landmarks, data.regions);
+      const raw = measureRegions(pos, data.index, data.landmarks, data.regions, data.torso);
       const frameScale = Math.sqrt((shape.bmi / data.refBMI) * (shape.heightM / data.baseHeight));
 
       const cmOf = (key) => (raw[key] == null ? null : rawToCm(key, raw[key], frameScale));

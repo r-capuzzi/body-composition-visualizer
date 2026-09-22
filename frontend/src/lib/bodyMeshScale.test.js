@@ -34,7 +34,9 @@ describe("measurement regions scale with the mesh", () => {
     expect(cm("hip")).toBeCloseTo(99.6, 0);
     expect(cm("waist")).toBeCloseTo(74.9, 0);
     expect(cm("chest")).toBeCloseTo(94.1, 0);
-    expect(cm("shoulder")).toBeCloseTo(45.2, 0);
+    // 45.2 before was just 2 x the old 0.22 cap (see SHOULDER_EDGE); this is
+    // the real width at the shoulder top
+    expect(cm("shoulder")).toBeCloseTo(44.2, 0);
     expect(cm("arm")).toBeCloseTo(33.1, 0);
   });
 
