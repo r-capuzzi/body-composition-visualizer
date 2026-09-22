@@ -42,7 +42,8 @@ export default function ResultsPanel({
 
   // Everything below reflects THIS moment in the plan.
   const point = result.expected[week];
-  const body = { ...bodyParamsFromStats(point, heightCm, sex), measurements };
+  // the start sets the fat-driven lean baseline (see bodyParamsFromStats)
+  const body = { ...bodyParamsFromStats(point, heightCm, sex, start), measurements };
   const ref = ffmiReference(sex);
 
   // Round BEFORE deciding. Maintenance is shown rounded, so typing that exact

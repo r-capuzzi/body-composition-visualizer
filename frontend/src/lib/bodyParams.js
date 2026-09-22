@@ -116,15 +116,22 @@ export function weightForFfmi(targetFfmi, bodyFatPct, heightCm) {
  * @param {"male"|"female"} [sex]
  * @returns {{muscle:number, fat:number, bmi:number, heightM:number}}
  */
-export function bodyParamsFromStats(point, heightCm, sex = "male") {
+export function bodyParamsFromStats(point, heightCm, sex = "male", forbesFrom = point) {
   // fat: body-fat % across this sex's lean-athlete -> high range (drives
   // morph SHAPE; see FAT_REFERENCE)
   const fat = fatAxis(point.body_fat_pct, sex);
 
   // muscle: FFMI from a little below this sex's untrained level (-> 0) up to
-  // near its natural ceiling (-> 1), net of fat-driven lean (see morphFfmi)
+  // near its natural ceiling (-> 1), net of fat-driven lean (see morphFfmi).
+  // Along a projection pass the START as `forbesFrom`: the backend's weekly
+  // lean change is already net muscle gained or lost (its training and
+  // deficit model), so re-deriving the fat-driven share from each week's fat
+  // mass counted it twice - a 52-week cut (110kg, 32% -> 18%) that LOST 2.5kg
+  // of lean read as muscle 0.54 -> 0.81, and a bulk that gained lean read as
+  // less muscular. Fixed at the start, only the projected lean change moves it.
   const { morphZero, morphFull } = ffmiReference(sex);
-  const fatMassKg = point.fat_mass_kg ?? point.weight_kg * (point.body_fat_pct / 100);
+  const fatMassOf = (pt) => pt.fat_mass_kg ?? pt.weight_kg * (pt.body_fat_pct / 100);
+  const fatMassKg = fatMassOf(forbesFrom);
   const m = Number.isFinite(fatMassKg)
     ? morphFfmi(point.lean_mass_kg, fatMassKg, heightCm, sex)
     : ffmi(point.lean_mass_kg, heightCm);
