@@ -118,8 +118,8 @@ function findAllLandmarks(base, index, scale = 1) {
 export const MEASURE_REGIONS = {
   shoulder: { mode: "width", maxAx: 0.22 },
   chest: { mode: "circumference", maxAx: 0.19 },
-  waist: { mode: "circumference", maxAx: 0.32 },
-  hip: { mode: "circumference", maxAx: 0.32 },
+  waist: { mode: "circumference", maxAx: 0.32, torsoOnly: true },
+  hip: { mode: "circumference", maxAx: 0.32, torsoOnly: true },
   arm: { mode: "circumference", minAx: 0.19, maxAx: 0.27, bandHalf: 0.03, local: true },
 };
 
@@ -188,6 +188,53 @@ export function buildAdjacency(vc, index) {
     }
   }
   return sets.map((s) => Uint32Array.from(s));
+}
+
+// Which vertices a flood fill over the mesh's edges reaches from `seeds`
+// without ever stepping onto a vertex at or above `ceilY` (base-mesh y).
+// Returns a Uint8Array, 1 = reached.
+export function floodBelow(adj, base, seeds, ceilY) {
+  const reached = new Uint8Array(adj.length);
+  // explicit stack, not recursion (13k vertices); mark on push so no vertex
+  // is ever queued twice
+  const stack = [];
+  for (const s of seeds) {
+    if (base[s * 3 + 1] < ceilY && !reached[s]) { reached[s] = 1; stack.push(s); }
+  }
+  while (stack.length) {
+    const nb = adj[stack.pop()];
+    for (let i = 0; i < nb.length; i++) {
+      const w = nb[i];
+      if (reached[w] || base[w * 3 + 1] >= ceilY) continue;
+      reached[w] = 1;
+      stack.push(w);
+    }
+  }
+  return reached;
+}
+
+// Below the armpit the A-pose arm and the torso are separate surfaces, so a
+// flood from the belly under a y ceiling reaches the torso (and legs) but not
+// the arms - until the ceiling rises past where they join. Binary-search that
+// height (the armpit), then keep the torso set from just under it. Torso
+// regions use this instead of an |x| cut: the arm's inner edge dips inside
+// the waist's maxAx from ~1.16m on the male mesh and ~1.05m on the female,
+// so a bigger waist was tearing a seam across the upper arm.
+function segmentTorso(base, adj, y0, scale) {
+  const seeds = [];
+  let hand = 0;
+  for (let v = 0; v < adj.length; v++) {
+    const x = base[v * 3], y = base[v * 3 + 1];
+    if (Math.abs(x) < 0.03 * scale && Math.abs(y - y0) < 0.02 * scale) seeds.push(v);
+    if (x > base[hand * 3]) hand = v; // outermost fingertip of the +x arm
+  }
+  let lo = y0, hi = y0 + 0.5 * scale;
+  for (let i = 0; i < 16; i++) {
+    const mid = (lo + hi) / 2;
+    if (floodBelow(adj, base, seeds, mid)[hand]) hi = mid;
+    else lo = mid;
+  }
+  return { armpit: lo, torso: floodBelow(adj, base, seeds, lo) };
 }
 
 const DELTA_SMOOTH_PASSES = 6;
@@ -323,6 +370,7 @@ function loadBodyData(sex) {
       data.landmarks = findAllLandmarks(data.base, data.index, data.scale);
       // fixed calibration reference - see BodyModel.jsx's blendWithMeasurements.
       data.neutralMeasurements = measureRegions(data.base, data.index, data.landmarks, data.regions);
+      Object.assign(data, segmentTorso(data.base, adj, data.landmarks.waist, data.scale));
       // the head's own horizontal centre, so BodyModel can scale it about
       // itself (a head that sits forward of the body's centre line would
       // otherwise drift as the scale changes)

@@ -36,8 +36,16 @@ const CLAY = new THREE.MeshStandardMaterial({
 // Widened hard from v1's 3cm edge-only blend on a fixed band, which is what
 // produced the "pasted on" look - real torsos taper into a waist or chest
 // over a good double-digit span of cm, not three.
-const REGION_SPREAD = { shoulder: 0.11, chest: 0.14, waist: 0.14, hip: 0.14, arm: 0.09 };
-const hillWeight = (y, y0, spread) => {
+// The waist's is [below, above]: a symmetric 0.14 stopped well short of the
+// ribs, so a bigger-than-estimated waist read as an inner tube with a crease
+// above it. Measured on the heavy morph (slice girth gain around the waist
+// landmark, normalised to 1 there), fat reaches half strength 0.075 below
+// the waist, same as before, but 0.155 above and zero by ~0.22 - abdominal
+// fat runs up under the ribs. A 0.30 raised cosine above fits those samples
+// to within ~0.03.
+const REGION_SPREAD = { shoulder: 0.11, chest: 0.14, waist: [0.14, 0.3], hip: 0.14, arm: 0.09 };
+const hillWeight = (y, y0, [below, above]) => {
+  const spread = y < y0 ? below : above;
   const d = Math.abs(y - y0);
   return d >= spread ? 0 : 0.5 * (1 + Math.cos((Math.PI * d) / spread));
 };
@@ -130,7 +138,12 @@ function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurem
       if (centres.every((c) => !c)) continue;
     }
     const target = cmToRawTarget(key, cm);
-    ratios.push({ region, y0, spread: REGION_SPREAD[key] * scale, ratio: clampRatio(target / neutralReal), centres });
+    const spread = [REGION_SPREAD[key]].flat();
+    let above = (spread[1] ?? spread[0]) * scale;
+    // a torso-only region can only tell torso from arm below the armpit (see
+    // segmentTorso), so its taper must be finished by then
+    if (region.torsoOnly) above = Math.min(above, data.armpit - y0);
+    ratios.push({ region, y0, spread: [spread[0] * scale, above], ratio: clampRatio(target / neutralReal), centres });
   }
   if (ratios.length === 0) return;
 
@@ -139,7 +152,8 @@ function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, measurem
     const x = pos[i], y = pos[i + 1], z = pos[i + 2];
     let sx = x, sz = z;
     for (const { region, y0, spread, ratio, centres } of ratios) {
-      const { mode, maxAx, local } = region;
+      const { mode, maxAx, local, torsoOnly } = region;
+      if (torsoOnly && !data.torso[i / 3]) continue;
       const w = hillWeight(y, y0, spread);
       if (w <= 0) continue;
       if (local) {
