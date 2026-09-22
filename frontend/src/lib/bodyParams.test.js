@@ -75,6 +75,21 @@ test("lean mass that comes with carrying fat isn't read as muscularity", () => {
   expect(at("male", 178, 80, 15)).toBeCloseTo((lean / h2 - 16) / 8, 5);
 });
 
+test("along a projection, the muscle morph follows the projected lean mass", () => {
+  // a 52-week cut from the real backend: 110kg/32% -> 88.1kg/17.9%, lean
+  // 74.8 -> 72.3kg. Per-week Forbes read that as muscle 0.54 -> 0.81.
+  const start = { weight_kg: 110, body_fat_pct: 32, lean_mass_kg: 74.8, fat_mass_kg: 35.2 };
+  const end = { weight_kg: 88.1, body_fat_pct: 17.9, lean_mass_kg: 72.3, fat_mass_kg: 15.8 };
+  const m0 = bodyParamsFromStats(start, 178, "male", start).muscle;
+  const m1 = bodyParamsFromStats(end, 178, "male", start).muscle;
+  expect(m1).toBeLessThan(m0); // lost lean -> a little less muscle, never more
+  expect(m0 - m1).toBeCloseTo(2.5 / 1.78 ** 2 / 8, 5); // exactly the lean lost
+  // a bulk that gains lean mass reads as MORE muscular
+  const b0 = { weight_kg: 68, body_fat_pct: 13, lean_mass_kg: 59.2, fat_mass_kg: 8.8 };
+  const b1 = { weight_kg: 96, body_fat_pct: 30.5, lean_mass_kg: 66.7, fat_mass_kg: 29.3 };
+  expect(bodyParamsFromStats(b1, 178, "male", b0).muscle).toBeGreaterThan(bodyParamsFromStats(b0, 178, "male", b0).muscle);
+});
+
 test("sex defaults to male, so existing callers are unchanged", () => {
   const p = { lean_mass_kg: 62, body_fat_pct: 20 };
   expect(bodyParamsFromStats(p, 178)).toEqual(bodyParamsFromStats(p, 178, "male"));
