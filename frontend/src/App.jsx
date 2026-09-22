@@ -13,8 +13,8 @@ import {
 import { TRAINING_EXPERIENCE, describeTrainingFrequency } from "./lib/trainingLevels";
 import { BODY_TYPE_PRESETS } from "./lib/bodyTypePresets";
 import { bodyParamsFromStats, weightForFfmi } from "./lib/bodyParams";
-import { getBodyData, prefetchBodyData, blendPositions, measureRegions, rawToCm } from "./lib/bodyMesh";
-import { regionFrameScale } from "./lib/bodyShape";
+import { getBodyData, prefetchBodyData, rawToCm } from "./lib/bodyMesh";
+import { calibrationBasis } from "./lib/bodyShape";
 import { useProjection } from "./hooks/useProjection";
 import { usePersistentState } from "./hooks/usePersistentState";
 import ActivityPicker from "./components/ActivityPicker";
@@ -235,16 +235,10 @@ export default function App() {
       const shape = bodyParamsFromStats(point, payload.height_cm, payload.sex);
       const data = await getBodyData(payload.sex === "female" ? "female" : "male");
 
-      const infMuscle = shape.muscle;
-      const infHeavy = Math.max(0, shape.fat * 2 - 1);
-      const infLean = Math.max(0, 1 - shape.fat * 2);
-      const pos = blendPositions(data, infMuscle, infHeavy, infLean);
-      const raw = measureRegions(pos, data.index, data.landmarks, data.regions, data.part);
-      const frameScale = Math.sqrt((shape.bmi / data.refBMI) * (shape.heightM / data.baseHeight));
-      const heightScale = shape.heightM / data.baseHeight;
-
-      const cmOf = (key) =>
-        raw[key] == null ? null : rawToCm(key, raw[key], regionFrameScale(data, key, frameScale, heightScale));
+      // the very estimate overrides are calibrated against (the projection's
+      // start is this same input), so echoing it back is a no-op on the avatar
+      const real = calibrationBasis(data, shape);
+      const cmOf = (key) => (real[key] == null ? null : rawToCm(key, real[key], 1));
       const cmVal = (key) => { const v = cmOf(key); return v == null ? "" : round1(v); };
       const inVal = (key) => { const v = cmOf(key); return v == null ? "" : round1(cmToIn(v)); };
 
