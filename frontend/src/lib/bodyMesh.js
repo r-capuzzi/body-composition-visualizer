@@ -75,6 +75,10 @@ function findLandmark(base, index, yFrom, yTo, maxAx, metric, wantMax) {
 // at 72.6% of height, the same fraction as the male's.
 export const MALE_REFERENCE_HEIGHT = 1.733;
 
+// Fraction of height over which the head blends from body-width scaling to
+// its own (from the narrowest point of the neck upward) - see BodyModel.
+const HEAD_BLEND = 0.04;
+
 // Search windows are deliberately narrow - wide enough to cover build-to-build
 // variation in where each landmark falls, not so wide they'd find the wrong
 // anatomical feature (hip's window stops short of where upper-thigh flare
@@ -93,6 +97,14 @@ function findAllLandmarks(base, index, scale = 1) {
   for (const [key, [yFrom, yTo, maxAx, metric, wantMax]] of Object.entries(LANDMARK_WINDOWS)) {
     out[key] = findLandmark(base, index, yFrom * scale, yTo * scale, maxAx * scale, metric, wantMax);
   }
+  // narrowest point of the neck - where the head stops taking the body's
+  // width scaling (see BodyModel). maxAx keeps the shoulders out of the slice.
+  let neckBest = Infinity;
+  out.neck = 1.5 * scale;
+  for (let y = 1.4 * scale; y <= 1.58 * scale; y += 0.004) {
+    const p = sliceMeasure(base, index, y, 0.12 * scale).perimeter;
+    if (p > 0.05 && p < neckBest) { neckBest = p; out.neck = y; }
+  }
   // the arm's `local` measurement (below) centres on the arm's own mean
   // position instead of slicing about the origin, so the min/max search above
   // doesn't apply to it - fixed at the upper-arm band, verified arm-only on
@@ -106,8 +118,8 @@ function findAllLandmarks(base, index, scale = 1) {
 export const MEASURE_REGIONS = {
   shoulder: { mode: "width", maxAx: 0.22 },
   chest: { mode: "circumference", maxAx: 0.19 },
-  waist: { mode: "circumference", maxAx: 0.32 },
-  hip: { mode: "circumference", maxAx: 0.32 },
+  waist: { mode: "circumference", maxAx: 0.32, torsoOnly: true },
+  hip: { mode: "circumference", maxAx: 0.32, torsoOnly: true },
   arm: { mode: "circumference", minAx: 0.19, maxAx: 0.27, bandHalf: 0.03, local: true },
 };
 
@@ -165,6 +177,85 @@ export function measureRegions(pos, index, landmarks, regions = MEASURE_REGIONS)
     }
   }
   return out;
+}
+
+export function buildAdjacency(vc, index) {
+  const sets = Array.from({ length: vc }, () => new Set());
+  for (let t = 0; t < index.length; t += 3) {
+    for (let e = 0; e < 3; e++) {
+      const a = index[t + e], b = index[t + ((e + 1) % 3)];
+      sets[a].add(b); sets[b].add(a);
+    }
+  }
+  return sets.map((s) => Uint32Array.from(s));
+}
+
+// Which vertices a flood fill over the mesh's edges reaches from `seeds`
+// without ever stepping onto a vertex at or above `ceilY` (base-mesh y).
+// Returns a Uint8Array, 1 = reached.
+export function floodBelow(adj, base, seeds, ceilY) {
+  const reached = new Uint8Array(adj.length);
+  // explicit stack, not recursion (13k vertices); mark on push so no vertex
+  // is ever queued twice
+  const stack = [];
+  for (const s of seeds) {
+    if (base[s * 3 + 1] < ceilY && !reached[s]) { reached[s] = 1; stack.push(s); }
+  }
+  while (stack.length) {
+    const nb = adj[stack.pop()];
+    for (let i = 0; i < nb.length; i++) {
+      const w = nb[i];
+      if (reached[w] || base[w * 3 + 1] >= ceilY) continue;
+      reached[w] = 1;
+      stack.push(w);
+    }
+  }
+  return reached;
+}
+
+// Below the armpit the A-pose arm and the torso are separate surfaces, so a
+// flood from the belly under a y ceiling reaches the torso (and legs) but not
+// the arms - until the ceiling rises past where they join. Binary-search that
+// height (the armpit), then keep the torso set from just under it. Torso
+// regions use this instead of an |x| cut: the arm's inner edge dips inside
+// the waist's maxAx from ~1.16m on the male mesh and ~1.05m on the female,
+// so a bigger waist was tearing a seam across the upper arm.
+function segmentTorso(base, adj, y0, scale) {
+  const seeds = [];
+  let hand = 0;
+  for (let v = 0; v < adj.length; v++) {
+    const x = base[v * 3], y = base[v * 3 + 1];
+    if (Math.abs(x) < 0.03 * scale && Math.abs(y - y0) < 0.02 * scale) seeds.push(v);
+    if (x > base[hand * 3]) hand = v; // outermost fingertip of the +x arm
+  }
+  let lo = y0, hi = y0 + 0.5 * scale;
+  for (let i = 0; i < 16; i++) {
+    const mid = (lo + hi) / 2;
+    if (floodBelow(adj, base, seeds, mid)[hand]) hi = mid;
+    else lo = mid;
+  }
+  return { armpit: lo, torso: floodBelow(adj, base, seeds, lo) };
+}
+
+const DELTA_SMOOTH_PASSES = 6;
+
+// Uniform-Laplacian smoothing of a per-vertex offset field: each pass moves
+// every offset halfway toward the mean of its neighbours'.
+export function smoothDeltas(delta, adj, iters) {
+  let cur = Float32Array.from(delta), nxt = new Float32Array(delta.length);
+  const pass = (k) => {
+    for (let v = 0; v < adj.length; v++) {
+      const A = adj[v]; let sx = 0, sy = 0, sz = 0;
+      for (let i = 0; i < A.length; i++) { const w = A[i] * 3; sx += cur[w]; sy += cur[w + 1]; sz += cur[w + 2]; }
+      const n = A.length || 1, j = v * 3;
+      nxt[j] = cur[j] + k * (sx / n - cur[j]);
+      nxt[j + 1] = cur[j + 1] + k * (sy / n - cur[j + 1]);
+      nxt[j + 2] = cur[j + 2] + k * (sz / n - cur[j + 2]);
+    }
+    [cur, nxt] = [nxt, cur];
+  };
+  for (let i = 0; i < iters; i++) pass(0.5);
+  return cur;
 }
 
 // raw (mesh units, pre-frameScale) -> real-world cm, and back. Shared so the
@@ -262,11 +353,34 @@ function loadBodyData(sex) {
       // once per mesh, not per shape change - the skeleton-driven height of
       // e.g. "the waist" doesn't move when fat/muscle influence does, only
       // its measurement there does.
+      // Smooth the morph OFFSETS (never the base mesh, so the face and hands
+      // keep their detail). The MakeHuman targets carry small lumps that the
+      // old lighting hid and correct lighting reveals: a ball-shaped deltoid
+      // with a hard crease against the chest on heavy/muscular builds, and a
+      // faceted band at the elbow. Measured over every edge, heavy at full
+      // strength folds 949 edges >25deg sharper than the base mesh; 6 passes
+      // of Laplacian smoothing cut that to 116 (-88%) at the cost of ~0.8cm
+      // of forward belly (9.7 -> 8.9cm). Taubin smoothing kept the belly
+      // almost exactly but left the deltoid ball and elbow facets visible,
+      // which were the problems - so Laplacian, chosen by side-by-side renders.
+      const adj = buildAdjacency(vc, data.index);
+      for (const k of ["dMuscle", "dHeavy", "dLean"]) data[k] = smoothDeltas(data[k], adj, DELTA_SMOOTH_PASSES);
       data.scale = data.baseHeight / MALE_REFERENCE_HEIGHT;
       data.regions = regionsForScale(data.scale);
       data.landmarks = findAllLandmarks(data.base, data.index, data.scale);
       // fixed calibration reference - see BodyModel.jsx's blendWithMeasurements.
       data.neutralMeasurements = measureRegions(data.base, data.index, data.landmarks, data.regions);
+      Object.assign(data, segmentTorso(data.base, adj, data.landmarks.waist, data.scale));
+      // the head's own horizontal centre, so BodyModel can scale it about
+      // itself (a head that sits forward of the body's centre line would
+      // otherwise drift as the scale changes)
+      const headFrom = data.landmarks.neck + HEAD_BLEND * data.baseHeight;
+      let hn = 0, hx = 0, hz = 0;
+      for (let i = 0; i < data.base.length; i += 3) {
+        if (data.base[i + 1] < headFrom) continue;
+        hn++; hx += data.base[i]; hz += data.base[i + 2];
+      }
+      data.head = { from: data.landmarks.neck, to: headFrom, cx: hx / hn, cz: hz / hn };
       entry.status = "done";
       entry.data = data;
       return data;
