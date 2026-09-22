@@ -66,6 +66,30 @@ describe.each([
   });
 });
 
+// The average US adult (CDC FastStats, NHANES 2021-23: men 175cm / 90.3kg,
+// waist 103.1; women 161.3cm / 77.9kg, waist 97.8), at typical NHANES DXA
+// body fat. With the fat axis's neutral at the range midpoint (23% men)
+// instead of the base mesh's own Relative Fat Mass (17.7%), he rendered a
+// 91cm waist.
+describe.each([
+  ["male", { h: 175, w: 90.3, bf: 28, waist: 103.1 }],
+  ["female", { h: 161.3, w: 77.9, bf: 40, waist: 97.8 }],
+])("the %s avatar at the NHANES average", (sex, c) => {
+  let m;
+  beforeAll(async () => { m = await loadMesh(sex); }, 30000);
+
+  test("has a waist within 8% of the measured average", async () => {
+    const { mesh, shape, data } = m;
+    const { bodyParamsFromStats } = await import("./bodyParams");
+    const p = bodyParamsFromStats({ weight_kg: c.w, body_fat_pct: c.bf, lean_mass_kg: c.w * (1 - c.bf / 100), fat_mass_kg: (c.w * c.bf) / 100 }, c.h, sex);
+    const pos = mesh.blendPositions(data, p.muscle, Math.max(0, p.fat * 2 - 1), Math.max(0, 1 - p.fat * 2));
+    const frame = Math.sqrt((p.bmi / data.refBMI) * (p.heightM / data.baseHeight)), hs = p.heightM / data.baseHeight;
+    const raw = mesh.measureRegions(pos, data.index, data.landmarks, data.regions, data.part).waist;
+    const cm = mesh.rawToCm("waist", raw, shape.regionFrameScale(data, "waist", frame, hs));
+    expect(Math.abs(cm / c.waist - 1)).toBeLessThan(0.08);
+  });
+});
+
 describe.each(["male", "female"])("%s measurement overrides", (sex) => {
   let m;
   beforeAll(async () => { m = await loadMesh(sex); }, 30000);

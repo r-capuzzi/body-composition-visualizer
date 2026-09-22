@@ -36,11 +36,28 @@ export const ffmiReference = (sex) => FFMI_REFERENCE[sex === "female" ? "female"
  * obese 32+ vs 25+). The female range is shifted by 8. Gallagher et al. 2000
  * (Am J Clin Nutr, BMI vs %fat) puts the gap nearer 12-13, so 8 is the
  * cautious end: if anything she still reads slightly heavier, not leaner.
+ *
+ * `neutral` is the body fat the unmorphed mesh actually shows, where fat =
+ * 0.5. It used to be the range's midpoint (23% / 31%), but MakeHuman's base
+ * bodies are slim-waisted: by Relative Fat Mass (Woolcott & Bergman 2018,
+ * Sci Rep - body fat from height/waist alone, validated against DXA; men
+ * 64 - 20 h/w, women 76 - 20 h/w) the base male (173.3cm tall, 74.9cm waist)
+ * reads 17.7% and the base female (159.3 / 65.4) 27.3%. With the midpoint,
+ * the NHANES-average man (175cm/90.3kg, ~28%) rendered a 91cm waist against
+ * a measured 103. The axis is now two straight pieces meeting there.
  */
 export const FAT_REFERENCE = {
-  male: { morphZero: 6, morphFull: 40 },
-  female: { morphZero: 14, morphFull: 48 },
+  male: { morphZero: 6, neutral: 17.7, morphFull: 40 },
+  female: { morphZero: 14, neutral: 27.3, morphFull: 48 },
 };
+
+// body-fat % -> the 0..1 fat axis, 0.5 at `neutral` (see FAT_REFERENCE)
+export function fatAxis(bodyFatPct, sex = "male") {
+  const { morphZero, neutral, morphFull } = fatReference(sex);
+  return bodyFatPct < neutral
+    ? clamp01(0.5 * (bodyFatPct - morphZero) / (neutral - morphZero))
+    : clamp01(0.5 + 0.5 * (bodyFatPct - neutral) / (morphFull - neutral));
+}
 export const fatReference = (sex) => FAT_REFERENCE[sex === "female" ? "female" : "male"];
 
 /**
@@ -63,8 +80,8 @@ export function ffmi(leanMassKg, heightCm) {
  * body got the full bodybuilder morph. Past each sex's reference fat mass,
  * the 10.4 ln(FM / FM_ref) kg Forbes attributes to the extra fat is taken
  * off first. FM_ref is the app's own neutral point - median FFMI at the
- * neutral body fat (FFMI_REFERENCE.average, FAT_REFERENCE midpoint), FMI
- * 5.65 men / 6.92 women. One-sided on purpose: below it the curve would
+ * neutral body fat (FFMI_REFERENCE.average, FAT_REFERENCE.neutral), FMI
+ * 4.06 men / 5.78 women. One-sided on purpose: below it the curve would
  * credit a lean body with muscle it hasn't built.
  * The FFMI card still shows the real FFMI; this only feeds the morph.
  */
@@ -72,8 +89,7 @@ const FORBES_FFM_PER_LN_FM = 10.4;
 export function morphFfmi(leanMassKg, fatMassKg, heightCm, sex = "male") {
   const h2 = (heightCm / 100) ** 2;
   const { average } = ffmiReference(sex);
-  const { morphZero, morphFull } = fatReference(sex);
-  const neutralFat = (morphZero + morphFull) / 2 / 100;
+  const neutralFat = fatReference(sex).neutral / 100;
   const fmRef = ((average * neutralFat) / (1 - neutralFat)) * h2;
   const excess = fatMassKg > fmRef ? FORBES_FFM_PER_LN_FM * Math.log(fatMassKg / fmRef) : 0;
   return (leanMassKg - excess) / h2;
@@ -103,8 +119,7 @@ export function weightForFfmi(targetFfmi, bodyFatPct, heightCm) {
 export function bodyParamsFromStats(point, heightCm, sex = "male") {
   // fat: body-fat % across this sex's lean-athlete -> high range (drives
   // morph SHAPE; see FAT_REFERENCE)
-  const fatRef = fatReference(sex);
-  const fat = clamp01((point.body_fat_pct - fatRef.morphZero) / (fatRef.morphFull - fatRef.morphZero));
+  const fat = fatAxis(point.body_fat_pct, sex);
 
   // muscle: FFMI from a little below this sex's untrained level (-> 0) up to
   // near its natural ceiling (-> 1), net of fat-driven lean (see morphFfmi)

@@ -1,4 +1,4 @@
-import { bodyParamsFromStats, clamp01, ffmi } from "./bodyParams";
+import { bodyParamsFromStats, clamp01, fatAxis, ffmi } from "./bodyParams";
 
 test("ffmi is lean mass over height squared (kg/m^2)", () => {
   // 64 kg lean, 1.8 m -> 64 / 3.24 ≈ 19.75
@@ -49,11 +49,14 @@ test("the muscle morph is calibrated per sex: a median man and a median woman re
 });
 
 test("the fat morph is calibrated per sex: the same ACE category reads alike", () => {
-  // ACE "average": 18-24% men, 25-31% women - the middle of each should sit
-  // near the neutral mesh on its own sex (it was 0.62 for the woman before)
+  // the base meshes' own body fat by Relative Fat Mass is the neutral point
+  expect(fatAxis(17.7, "male")).toBeCloseTo(0.5, 5);
+  expect(fatAxis(27.3, "female")).toBeCloseTo(0.5, 5);
+  // ACE "average": 18-24% men, 25-31% women - the middle of each reads a
+  // little past neutral on its own sex (the woman was 0.62 on the male scale)
   const man = bodyParamsFromStats({ lean_mass_kg: 60, body_fat_pct: 21 }, 178, "male");
   const woman = bodyParamsFromStats({ lean_mass_kg: 44, body_fat_pct: 28 }, 165, "female");
-  expect(Math.abs(woman.fat - man.fat)).toBeLessThan(0.05);
+  for (const f of [man.fat, woman.fat]) { expect(f).toBeGreaterThan(0.5); expect(f).toBeLessThan(0.6); }
   // and the lean end is each sex's athletic floor (ACE athletes: 6% / 14%)
   expect(bodyParamsFromStats({ lean_mass_kg: 50, body_fat_pct: 14 }, 165, "female").fat).toBe(0);
 });
@@ -64,11 +67,12 @@ test("lean mass that comes with carrying fat isn't read as muscularity", () => {
   // raw FFMI: 145kg/42% man 26.5 vs 85kg/10% lifter 24.1 - both got muscle 1
   expect(at("male", 178, 145, 42)).toBeLessThan(0.85);
   expect(at("male", 178, 145, 42)).toBeLessThan(at("male", 178, 85, 10));
-  // a 120kg woman at 52% reads as average muscle, not maxed
-  expect(at("female", 165, 120, 52)).toBeCloseTo(0.5, 1);
+  // a 120kg woman at 52% reads as below-average muscle, not maxed
+  expect(at("female", 165, 120, 52)).toBeGreaterThan(0.3);
+  expect(at("female", 165, 120, 52)).toBeLessThan(0.55);
   // at or below the neutral fat mass nothing changes (one-sided)
-  const lean = 80 * 0.8, h2 = 1.78 ** 2;
-  expect(at("male", 178, 80, 20)).toBeCloseTo((lean / h2 - 16) / 8, 5);
+  const lean = 80 * 0.85, h2 = 1.78 ** 2;
+  expect(at("male", 178, 80, 15)).toBeCloseTo((lean / h2 - 16) / 8, 5);
 });
 
 test("sex defaults to male, so existing callers are unchanged", () => {
