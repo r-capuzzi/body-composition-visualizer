@@ -48,6 +48,16 @@ test("the muscle morph is calibrated per sex: a median man and a median woman re
   expect(elite.muscle).toBe(1);
 });
 
+test("the fat morph is calibrated per sex: the same ACE category reads alike", () => {
+  // ACE "average": 18-24% men, 25-31% women - the middle of each should sit
+  // near the neutral mesh on its own sex (it was 0.62 for the woman before)
+  const man = bodyParamsFromStats({ lean_mass_kg: 60, body_fat_pct: 21 }, 178, "male");
+  const woman = bodyParamsFromStats({ lean_mass_kg: 44, body_fat_pct: 28 }, 165, "female");
+  expect(Math.abs(woman.fat - man.fat)).toBeLessThan(0.05);
+  // and the lean end is each sex's athletic floor (ACE athletes: 6% / 14%)
+  expect(bodyParamsFromStats({ lean_mass_kg: 50, body_fat_pct: 14 }, 165, "female").fat).toBe(0);
+});
+
 test("sex defaults to male, so existing callers are unchanged", () => {
   const p = { lean_mass_kg: 62, body_fat_pct: 20 };
   expect(bodyParamsFromStats(p, 178)).toEqual(bodyParamsFromStats(p, 178, "male"));

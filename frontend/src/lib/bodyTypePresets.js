@@ -30,6 +30,8 @@ export const BODY_TYPE_PRESETS = [
   {
     value: "overweight",
     label: "Overweight",
-    bodyFatPct: { male: 40, female: 40 },
+    // each sex's full heavy-morph point (FAT_REFERENCE.morphFull) - 40% is
+    // far heavier on a man than on a woman
+    bodyFatPct: { male: 40, female: 48 },
   },
 ];

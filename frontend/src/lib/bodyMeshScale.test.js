@@ -83,6 +83,30 @@ describe("measurement regions scale with the mesh", () => {
   });
 });
 
+describe("less body fat at the same weight", () => {
+  let data, mesh, params;
+  beforeAll(async () => {
+    ({ mod: mesh, data } = await loadMesh("male"));
+    params = await import("./bodyParams");
+  }, 30000);
+
+  // at 80kg, 6% has 11kg more lean mass than 20%; the lean target (really
+  // MakeHuman's underweight body) used to make that man skinnier - arm 31.3cm
+  // vs 35.3, chest shrinking as muscle went up
+  test("reads as more muscular, not skinnier", () => {
+    const at = (bf) => {
+      const p = params.bodyParamsFromStats({ weight_kg: 80, body_fat_pct: bf, lean_mass_kg: 80 * (1 - bf / 100) }, 178, "male");
+      const pos = mesh.blendPositions(data, p.muscle, Math.max(0, p.fat * 2 - 1), Math.max(0, 1 - p.fat * 2));
+      const r = mesh.measureRegions(pos, data.index, data.landmarks, data.regions, data.part);
+      return Object.fromEntries(Object.entries(r).map(([k, v]) => [k, mesh.rawToCm(k, v, 1)]));
+    };
+    const lean = at(6), avg = at(20);
+    expect(lean.chest).toBeGreaterThan(avg.chest);
+    expect(lean.arm).toBeGreaterThan(avg.arm - 1);
+    expect(lean.waist).toBeLessThan(avg.waist - 3);
+  });
+});
+
 describe("floodBelow", () => {
   test("reaches neighbours under the ceiling and never crosses it", async () => {
     const { floodBelow } = await import("./bodyMesh");

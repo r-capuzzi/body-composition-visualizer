@@ -27,6 +27,23 @@ export const FFMI_REFERENCE = {
 export const ffmiReference = (sex) => FFMI_REFERENCE[sex === "female" ? "female" : "male"];
 
 /**
+ * Body-fat % where the avatar's fat axis starts (lean morph at full) and
+ * saturates (heavy morph at full), by sex. This used to be 6-40% for
+ * everyone, which put the neutral mesh at 23% on both - average for a man,
+ * but lean for a woman, so a normal-BMI woman at a typical 32% already grew a
+ * belly roll. Women carry more essential and typical fat at every level: the
+ * ACE categories run 7-8 points higher for women (athletes 14-20 vs 6-13,
+ * obese 32+ vs 25+). The female range is shifted by 8. Gallagher et al. 2000
+ * (Am J Clin Nutr, BMI vs %fat) puts the gap nearer 12-13, so 8 is the
+ * cautious end: if anything she still reads slightly heavier, not leaner.
+ */
+export const FAT_REFERENCE = {
+  male: { morphZero: 6, morphFull: 40 },
+  female: { morphZero: 14, morphFull: 48 },
+};
+export const fatReference = (sex) => FAT_REFERENCE[sex === "female" ? "female" : "male"];
+
+/**
  * Fat-Free Mass Index: lean mass normalised for height (kg / m²), the standard
  * way to compare muscularity across body sizes. See FFMI_REFERENCE for what
  * the numbers mean for each sex.
@@ -58,8 +75,10 @@ export function weightForFfmi(targetFfmi, bodyFatPct, heightCm) {
  * @returns {{muscle:number, fat:number, bmi:number, heightM:number}}
  */
 export function bodyParamsFromStats(point, heightCm, sex = "male") {
-  // fat: body-fat % across a lean-athlete -> high range (drives morph SHAPE)
-  const fat = clamp01((point.body_fat_pct - 6) / (40 - 6));
+  // fat: body-fat % across this sex's lean-athlete -> high range (drives
+  // morph SHAPE; see FAT_REFERENCE)
+  const fatRef = fatReference(sex);
+  const fat = clamp01((point.body_fat_pct - fatRef.morphZero) / (fatRef.morphFull - fatRef.morphZero));
 
   // muscle: FFMI from a little below this sex's untrained level (-> 0) up to
   // near its natural ceiling (-> 1)
