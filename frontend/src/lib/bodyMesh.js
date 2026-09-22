@@ -272,6 +272,54 @@ function segmentTorso(base, adj, y0, scale) {
   return { armpit: lo, torso, part };
 }
 
+// Head, hands and feet are mostly bone, so they must not take the body's
+// full width factor (that tracks mass). Each vertex gets a group and a 0..1
+// blend weight, found once on the base mesh; BodyModel measures each
+// group's centre on the live shape and scales it about that. Groups:
+export const EXT_HEAD = 1, EXT_HAND_R = 2, EXT_HAND_L = 3, EXT_FOOT_R = 4, EXT_FOOT_L = 5;
+// - head: from the narrowest point of the neck up over HEAD_BLEND.
+// - hands: along each arm's own shoulder -> fingertip axis (a fixed-|x| slice
+//   cuts the sloped A-pose arm at an angle); the arm is narrowest at 0.70 of
+//   that length on both meshes, which is the wrist.
+// - feet: below the ankle, the narrowest leg slice (0.13 x scale on both).
+const WRIST_T = 0.7, WRIST_BLEND = [-0.07, -0.01];
+const ANKLE_Y = 0.13, ANKLE_BLEND = 0.05;
+function segmentExtremities(base, part, landmarks, armpit, baseHeight, scale) {
+  const n = part.length;
+  const group = new Uint8Array(n), weight = new Float32Array(n);
+  const headFrom = landmarks.neck, headTo = headFrom + HEAD_BLEND * baseHeight;
+  for (let v = 0; v < n; v++) {
+    const y = base[v * 3 + 1];
+    if (y > headFrom) { group[v] = EXT_HEAD; weight[v] = smooth01((y - headFrom) / (headTo - headFrom)); }
+    const ankle = ANKLE_Y * scale;
+    if (y < ankle && part[v] !== PART_ARM) {
+      group[v] = base[v * 3] >= 0 ? EXT_FOOT_R : EXT_FOOT_L;
+      weight[v] = smooth01((ankle - y) / (ANKLE_BLEND * scale));
+    }
+  }
+  for (const sign of [1, -1]) {
+    let tip = -1, ax = 0, ay = 0, az = 0, an = 0;
+    for (let v = 0; v < n; v++) {
+      if (part[v] !== PART_ARM || Math.sign(base[v * 3]) !== sign) continue;
+      if (tip < 0 || sign * base[v * 3] > sign * base[tip * 3]) tip = v;
+      if (base[v * 3 + 1] > armpit - 0.03 * scale) { ax += base[v * 3]; ay += base[v * 3 + 1]; az += base[v * 3 + 2]; an++; }
+    }
+    if (tip < 0 || an === 0) continue;
+    const A = [ax / an, ay / an, az / an];
+    const d = [base[tip * 3] - A[0], base[tip * 3 + 1] - A[1], base[tip * 3 + 2] - A[2]];
+    const len = Math.hypot(...d), u = d.map((c) => c / len);
+    const lo = WRIST_T * len + WRIST_BLEND[0] * scale, hi = WRIST_T * len + WRIST_BLEND[1] * scale;
+    for (let v = 0; v < n; v++) {
+      if (part[v] !== PART_ARM || Math.sign(base[v * 3]) !== sign) continue;
+      const t = (base[v * 3] - A[0]) * u[0] + (base[v * 3 + 1] - A[1]) * u[1] + (base[v * 3 + 2] - A[2]) * u[2];
+      if (t <= lo) continue;
+      group[v] = sign > 0 ? EXT_HAND_R : EXT_HAND_L;
+      weight[v] = smooth01((t - lo) / (hi - lo));
+    }
+  }
+  return { group, weight };
+}
+
 const DELTA_SMOOTH_PASSES = 6;
 
 // The heavy target is gross fat gain: +16L on the base male (the fat itself
@@ -470,16 +518,7 @@ function loadBodyData(sex) {
       data.neutralMeasurements = measureRegions(data.base, data.index, data.landmarks, data.regions, data.part);
       // after capLeanByHeavy, which needs the gross fat map
       data.dHeavy = netHeavyOfLeanLoss(data.dHeavy, data.base, data.part, data.landmarks, data.armpit, data.scale);
-      // the head's own horizontal centre, so BodyModel can scale it about
-      // itself (a head that sits forward of the body's centre line would
-      // otherwise drift as the scale changes)
-      const headFrom = data.landmarks.neck + HEAD_BLEND * data.baseHeight;
-      let hn = 0, hx = 0, hz = 0;
-      for (let i = 0; i < data.base.length; i += 3) {
-        if (data.base[i + 1] < headFrom) continue;
-        hn++; hx += data.base[i]; hz += data.base[i + 2];
-      }
-      data.head = { from: data.landmarks.neck, to: headFrom, cx: hx / hn, cz: hz / hn };
+      data.extremities = segmentExtremities(data.base, data.part, data.landmarks, data.armpit, data.baseHeight, data.scale);
       entry.status = "done";
       entry.data = data;
       return data;

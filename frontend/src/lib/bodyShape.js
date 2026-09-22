@@ -217,3 +217,61 @@ export function blendWithMeasurements(pos, data, infMuscle, infHeavy, infLean, m
     pos[i + 2] = sz;
   }
 }
+// How much of the body's width factor the head, hands and feet take, as an
+// exponent: 1 is the old behaviour (a 240kg head 88% wider than it should
+// be - flattened and jowly), 0 is none (a pinhead on a cone of neck). Renders
+// at 0/0.2/0.35/0.5/1 on the 240kg body: 0.35-0.5 read naturally, and 0.5
+// keeps the facial fat a body that heavy genuinely carries. Measured data
+// bounds it for hands too: in an obese cohort (BMI 31-87, Wiggermann et al.
+// 2019, Human Factors, "Anthropometric Dimensions of Individuals With High
+// Body Mass Index"),
+// men's weight spans 97-213kg (5th-95th pct, 2.2x) while hand breadth spans
+// only 83-101mm (1.22x) and head breadth 150-171mm (1.14x) - at most
+// weight^0.25 for the hand even before stature's share of that spread, where
+// the frame goes as weight^0.5. Near normal weight frameScale ~1, so
+// ordinary bodies barely change.
+const EXTREMITY_WIDTH_EXPONENT = 0.5;
+const EXT_GROUPS = 6; // 0 = body, then EXT_HEAD..EXT_FOOT_L from bodyMesh
+
+/**
+ * Bake the frame's width scale into `p` (the blended body, mesh units, before
+ * recentring by `off`), and recentre it; height is left to mesh.scale.y.
+ * Width is baked in per vertex rather than set on mesh.scale, because the
+ * head, hands and feet must not take the body's full width factor: that
+ * tracks mass, and bony extremities change far less with weight than a
+ * torso. Applied uniformly, a 240kg body (frameScale 1.88) got a head 88%
+ * wider but no taller, and a BMI-45 body paddle hands and splayed feet.
+ * Each extremity scales about its joint by a damped factor (see
+ * EXTREMITY_WIDTH_EXPONENT), blended in over the neck / wrist / ankle so
+ * there's no seam. Joints come from the live shape, not the base mesh:
+ * the morphs and a shoulder override both move the hands, and a stale
+ * centre would leave a hand behind its own arm.
+ */
+export function applyFrame(p, data, frameScale, heightScale, off) {
+  const { group, weight } = data.extremities;
+  const cx = new Float64Array(EXT_GROUPS), cz = new Float64Array(EXT_GROUPS), cn = new Float64Array(EXT_GROUPS);
+  // about the JOINT - the neck / wrist / ankle ring inside the blend - not
+  // the extremity's own centroid: the hand's centroid sits ~8cm past the
+  // wrist, so scaling about it pulled the whole hand back toward mid-palm
+  // and the blend had to stretch the wrist ~2x to close the gap.
+  for (let v = 0; v < group.length; v++) {
+    const g = group[v];
+    if (!g || weight[v] <= 0 || weight[v] >= 1) continue;
+    cx[g] += p[v * 3]; cz[g] += p[v * 3 + 2]; cn[g]++;
+  }
+  for (let g = 1; g < EXT_GROUPS; g++) if (cn[g]) { cx[g] = cx[g] / cn[g] + off.x; cz[g] = cz[g] / cn[g] + off.z; }
+  const extScale = heightScale * Math.pow(frameScale / heightScale, EXTREMITY_WIDTH_EXPONENT);
+  for (let i = 0; i < p.length; i += 3) {
+    const yRaw = p[i + 1];
+    const x = p[i] + off.x, z = p[i + 2] + off.z;
+    let bx = x * frameScale, bz = z * frameScale;
+    const g = group[i / 3], w = weight[i / 3];
+    if (g && w > 0 && cn[g]) {
+      bx += w * (cx[g] * frameScale + (x - cx[g]) * extScale - bx);
+      bz += w * (cz[g] * frameScale + (z - cz[g]) * extScale - bz);
+    }
+    p[i] = bx;
+    p[i + 1] = yRaw + off.y;
+    p[i + 2] = bz;
+  }
+}

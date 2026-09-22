@@ -3,21 +3,13 @@ import * as THREE from "three";
 
 import { clamp01 } from "../lib/bodyParams";
 import { useBodySuspense } from "../lib/bodyMesh";
-import { blendWithMeasurements } from "../lib/bodyShape";
+import { applyFrame, blendWithMeasurements } from "../lib/bodyShape";
 
 const CLAY = new THREE.MeshStandardMaterial({
   color: "#c78a66",
   roughness: 0.74,
   metalness: 0.0,
 });
-
-// How much of the body's width factor the head takes, as an exponent: 1 is
-// the old behaviour (a 240kg head 88% wider than it should be - flattened
-// and jowly), 0 is none (a pinhead on a cone of neck). Renders at 0/0.2/
-// 0.35/0.5/1 on the 240kg body: 0.35-0.5 read naturally, and 0.5 keeps the
-// facial fat a body that heavy genuinely carries. Near normal weight
-// frameScale ~1, so ordinary bodies barely change.
-const HEAD_WIDTH_EXPONENT = 0.5;
 
 /**
  * The MakeHuman body for `sex`, morphed and scaled from `shape`:
@@ -106,31 +98,8 @@ export default function BodyModel({ sex = "male", shape }) {
     const posAttr = mesh.geometry.attributes.position;
     const p = posAttr.array;
     blendWithMeasurements(p, data, infMuscle, infHeavy, infLean, measurements, frameScale);
-
-    // Width is baked in per vertex rather than set on mesh.scale, because the
-    // head must not take the body's full width factor: that tracks mass, and
-    // a head changes far less with weight than a torso. Applied uniformly, a
-    // 240kg body (frameScale 1.88) got a head 88% wider but no taller. The
-    // head scales about its own centre by a damped factor (see
-    // HEAD_WIDTH_EXPONENT), blended in over the neck so there's no seam.
-    const off = mesh.userData.centerOffset;
-    const { from, to, cx, cz } = data.head;
-    const headScale = heightScale * Math.pow(frameScale / heightScale, HEAD_WIDTH_EXPONENT);
-    for (let i = 0; i < p.length; i += 3) {
-      const yRaw = p[i + 1];
-      const x = p[i] + off.x, z = p[i + 2] + off.z;
-      let bx = x * frameScale, bz = z * frameScale;
-      if (yRaw > from) {
-        const t = Math.min(1, (yRaw - from) / (to - from));
-        const w = t * t * (3 - 2 * t);
-        const hx = cx + off.x, hz = cz + off.z;
-        bx += w * (hx * frameScale + (x - hx) * headScale - bx);
-        bz += w * (hz * frameScale + (z - hz) * headScale - bz);
-      }
-      p[i] = bx;
-      p[i + 1] = yRaw + off.y;
-      p[i + 2] = bz;
-    }
+    // width per vertex, so the head, hands and feet keep bony proportions
+    applyFrame(p, data, frameScale, heightScale, mesh.userData.centerOffset);
     posAttr.needsUpdate = true;
     mesh.geometry.computeVertexNormals();
     mesh.geometry.computeBoundingSphere(); // positions now carry the size

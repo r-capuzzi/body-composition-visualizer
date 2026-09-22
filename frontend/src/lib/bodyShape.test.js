@@ -79,6 +79,33 @@ describe.each(["male", "female"])("%s measurement overrides", (sex) => {
     }
   });
 
+  test("a heavier frame widens the body but not the hands, feet or head as much", () => {
+    const { mesh, shape, data } = m;
+    const off = { x: 0, y: 0, z: 0 };
+    const framed = (frame) => {
+      const pos = shaped(m, {});
+      shape.applyFrame(pos, data, frame, 1, off);
+      return pos;
+    };
+    // x/z spread of one extremity group's fully-weighted vertices
+    const spread = (pos, g) => {
+      let lo = Infinity, hi = -Infinity;
+      for (let v = 0; v < data.extremities.group.length; v++) {
+        if (data.extremities.group[v] !== g || data.extremities.weight[v] < 1) continue;
+        lo = Math.min(lo, pos[v * 3 + 2]); hi = Math.max(hi, pos[v * 3 + 2]);
+      }
+      return hi - lo;
+    };
+    const one = framed(1), big = framed(1.46); // BMI ~45 on the base male
+    for (const g of [mesh.EXT_HEAD, mesh.EXT_HAND_R, mesh.EXT_HAND_L, mesh.EXT_FOOT_R, mesh.EXT_FOOT_L]) {
+      expect(spread(big, g) / spread(one, g)).toBeCloseTo(Math.sqrt(1.46), 2);
+    }
+    const waist = (pos) => mesh.rawToCm("waist", mesh.measureRegions(pos, data.index, data.landmarks, data.regions, data.part).waist, 1);
+    expect(waist(big) / waist(one)).toBeCloseTo(1.46, 1);
+    // and the neck/wrist/ankle blends don't tear
+    expect(maxEdgeStretch(data.index, one, big)).toBeLessThan(1.46 * 1.15);
+  });
+
   test("shoulder width actually moves the arms apart", () => {
     const { data } = m;
     const tipX = (pos) => { let x = 0; for (let i = 0; i < pos.length; i += 3) x = Math.max(x, pos[i]); return x; };
