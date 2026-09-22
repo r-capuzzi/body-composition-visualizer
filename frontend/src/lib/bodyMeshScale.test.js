@@ -107,6 +107,32 @@ describe("less body fat at the same weight", () => {
   });
 });
 
+describe.each(["male", "female"])("more body fat at the same %s weight", (sex) => {
+  let data, mesh;
+  beforeAll(async () => { ({ mod: mesh, data } = await loadMesh(sex)); }, 30000);
+
+  const volume = (p, idx) => {
+    let v = 0;
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+      v += p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) - p[a + 1] * (p[b] * p[c + 2] - p[b + 2] * p[c])
+        + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c]);
+    }
+    return Math.abs(v) / 6;
+  };
+
+  // the heavy morph used to add 27% (male) / 33% (female) volume at constant
+  // weight, where fat's lower density accounts for ~3.5%
+  test("keeps a visible belly without inflating the whole body", () => {
+    const heavy = mesh.blendPositions(data, 0, 1, 0);
+    expect(volume(heavy, data.index) / volume(data.base, data.index)).toBeLessThan(1.18);
+    const cm = (pos, k) => mesh.rawToCm(k, mesh.measureRegions(pos, data.index, data.landmarks, data.regions, data.part)[k], 1);
+    expect(cm(heavy, "waist") - cm(data.base, "waist")).toBeGreaterThan(15); // the belly
+    expect(cm(heavy, "arm") - cm(data.base, "arm")).toBeLessThan(1.5);       // fat displaces arm muscle
+    expect(cm(heavy, "hip") - cm(data.base, "hip")).toBeLessThan(4);
+  });
+});
+
 describe("floodBelow", () => {
   test("reaches neighbours under the ceiling and never crosses it", async () => {
     const { floodBelow } = await import("./bodyMesh");
